@@ -1,0 +1,14 @@
+node_modules/
+dist/
+.DS_Store
+*.log
+logs/
+server.pid
+server/data/
+
+# API 자격증명 — 절대 커밋하지 않는다
+server/data/credentials.json
+server/data/live-armed.json
+*.pem
+.env
+.env.*
