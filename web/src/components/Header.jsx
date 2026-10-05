@@ -10,7 +10,22 @@ function Stat({ label, value, sub, tone }) {
   );
 }
 
-export function Header({ state, connected, onOpenSettings, onOpenAccount, onToggleEngine, onReset, busy }) {
+export function Header({
+  state,
+  connected,
+  onOpenSettings,
+  onOpenAccount,
+  onToggleEngine,
+  onReset,
+  busy,
+  user,
+  accounts,
+  activeAccountId,
+  onSelectAccount,
+  onLogout,
+  onOpenMaster,
+}) {
+  const activeAccount = accounts?.find((a) => a.id === activeAccountId) ?? null;
   const s = state?.summary;
   const status = state?.status ?? {};
   const totalPnl = s?.totalPnl ?? 0;
@@ -51,6 +66,22 @@ export function Header({ state, connected, onOpenSettings, onOpenAccount, onTogg
         </div>
 
         <div className="header-actions">
+          {accounts?.length > 1 ? (
+            <select
+              className="select-account"
+              value={activeAccountId ?? ''}
+              onChange={(e) => onSelectAccount(e.target.value)}
+              title="거래 계정 전환"
+            >
+              {accounts.map((a) => (
+                <option key={a.id} value={a.id}>
+                  {a.name}{a.ownerName ? ` (${a.ownerName})` : ''}
+                </option>
+              ))}
+            </select>
+          ) : activeAccount ? (
+            <span className="chip" title="거래 계정">{activeAccount.name}</span>
+          ) : null}
           <div className={`conn conn-${connectionTone}`}>
             <span className="dot" />
             <div>
@@ -73,6 +104,17 @@ export function Header({ state, connected, onOpenSettings, onOpenAccount, onTogg
           </button>
           <button className="btn btn-ghost" onClick={onReset} disabled={busy} title="가상 자산을 초기 자본으로 리셋">
             ↺ 초기화
+          </button>
+          {user?.role === 'master' ? (
+            <button className="btn btn-ghost" onClick={onOpenMaster} title="전 계정 현황 · 사용자 · 전체 로그">
+              ♛ 마스터
+            </button>
+          ) : null}
+          <span className="chip" title={`${user?.name ?? ''} (${user?.role === 'master' ? '마스터' : '일반'})`}>
+            {user?.role === 'master' ? '♛ ' : ''}{user?.name ?? ''}
+          </span>
+          <button className="btn btn-ghost btn-sm" onClick={onLogout} title="로그아웃">
+            로그아웃
           </button>
         </div>
       </div>

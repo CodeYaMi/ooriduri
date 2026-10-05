@@ -1,11 +1,21 @@
 /**
  * 엔진 상태 점검 스크립트 (개발용)
- *   node scripts/inspect.js
+ *   CS_TOKEN=<세션토큰> node scripts/inspect.js [accountId]
+ * 토큰 발급: curl -s -X POST localhost:8787/api/auth/login \
+ *   -H 'Content-Type: application/json' -d '{"name":"...","password":"..."}'
  * WebSocket 으로 스냅샷을 받아 후보/포지션/설정을 출력한다.
  */
 import WebSocket from 'ws';
 
-const url = process.env.WS_URL || 'ws://localhost:8787/ws';
+const BASE = process.env.WS_URL || 'ws://localhost:8787/ws';
+const token = process.env.CS_TOKEN ?? '';
+const wantAccount = process.argv[2] ?? null;
+const url = token ? `${BASE}?token=${encodeURIComponent(token)}` : BASE;
+
+if (!token) {
+  console.error('CS_TOKEN 이 필요합니다 (로그인 후 세션 토큰).');
+  process.exit(2);
+}
 
 const ws = new WebSocket(url);
 
@@ -17,9 +27,11 @@ const timer = setTimeout(() => {
 ws.on('message', (raw) => {
   const msg = JSON.parse(raw.toString());
   if (msg.type !== 'state') return;
+  if (wantAccount && msg.accountId !== wantAccount) return;
 
   const d = msg.data;
   console.log('═══════════════════════════════════════════════════');
+  console.log('계정       :', msg.accountId);
   console.log('실행 상태  :', d.running, '| 24h폴링:', d.status.market, '| 실시간가격:', d.status.priceFeed);
   console.log('스캔       :', d.status.scanCount, '회 |', d.status.lastScanMs, 'ms | 시장', d.marketCount, '종목 | 분봉', d.trackedHistory, '종목');
   console.log('추적 구독  :', d.tracked.length, '종목 →', d.tracked.join(', '));

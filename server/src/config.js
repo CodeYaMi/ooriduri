@@ -3,7 +3,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const DATA_DIR = path.join(__dirname, '..', 'data');
+const DATA_DIR = process.env.COIN_SURFER_DATA_DIR || path.join(__dirname, '..', 'data');
 const SETTINGS_FILE = path.join(DATA_DIR, 'settings.json');
 const STATE_FILE = path.join(DATA_DIR, 'portfolio.json');
 
@@ -172,10 +172,11 @@ function ensureDir() {
   if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 }
 
-export function loadSettings() {
+/** 경로 지정 버전 (계정별 저장용). file 을 생략하면 레거시 단일 파일을 쓴다. */
+export function loadSettingsFrom(file = SETTINGS_FILE) {
   try {
-    if (!fs.existsSync(SETTINGS_FILE)) return { ...DEFAULT_SETTINGS };
-    const raw = JSON.parse(fs.readFileSync(SETTINGS_FILE, 'utf8'));
+    if (!fs.existsSync(file)) return { ...DEFAULT_SETTINGS };
+    const raw = JSON.parse(fs.readFileSync(file, 'utf8'));
     return normalizeSettings({ ...raw }).settings;
   } catch (err) {
     console.warn('[config] 설정 파일을 읽지 못해 기본값으로 시작합니다:', err.message);
@@ -183,30 +184,40 @@ export function loadSettings() {
   }
 }
 
-export function saveSettings(settings) {
+export function saveSettingsTo(settings, file = SETTINGS_FILE) {
   try {
-    ensureDir();
-    fs.writeFileSync(SETTINGS_FILE, JSON.stringify(settings, null, 2), 'utf8');
+    ensureDir(path.dirname(file));
+    fs.writeFileSync(file, JSON.stringify(settings, null, 2), 'utf8');
   } catch (err) {
     console.error('[config] 설정 저장 실패:', err.message);
   }
 }
 
-export function loadPortfolioState() {
+export function loadPortfolioFrom(file = STATE_FILE) {
   try {
-    if (!fs.existsSync(STATE_FILE)) return null;
-    return JSON.parse(fs.readFileSync(STATE_FILE, 'utf8'));
+    if (!fs.existsSync(file)) return null;
+    return JSON.parse(fs.readFileSync(file, 'utf8'));
   } catch (err) {
     console.warn('[config] 포트폴리오 상태를 읽지 못했습니다:', err.message);
     return null;
   }
 }
 
-export function savePortfolioState(state) {
+export function savePortfolioTo(state, file = STATE_FILE) {
   try {
-    ensureDir();
-    fs.writeFileSync(STATE_FILE, JSON.stringify(state, null, 2), 'utf8');
+    if (state === null) {
+      if (fs.existsSync(file)) fs.unlinkSync(file);
+      return;
+    }
+    ensureDir(path.dirname(file));
+    fs.writeFileSync(file, JSON.stringify(state, null, 2), 'utf8');
   } catch (err) {
     console.error('[config] 포트폴리오 상태 저장 실패:', err.message);
   }
 }
+
+// 레거시 별칭 (기존 단일 파일 경로용)
+export const loadSettings = () => loadSettingsFrom(SETTINGS_FILE);
+export const saveSettings = (settings) => saveSettingsTo(settings, SETTINGS_FILE);
+export const loadPortfolioState = () => loadPortfolioFrom(STATE_FILE);
+export const savePortfolioState = (state) => savePortfolioTo(state, STATE_FILE);

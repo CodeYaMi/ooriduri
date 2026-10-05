@@ -20,7 +20,7 @@
     "restart": "node scripts/daemon.js restart",
     "status": "node scripts/daemon.js status",
     "logs": "tail -f logs/server.log",
-    "test": "node scripts/check-syntax.js && node scripts/check-docs.js && node scripts/test-portfolio.js && node scripts/test-settings.js && node scripts/test-rsi.js && node scripts/test-rsi-filter.js && node scripts/test-24h-filter.js && node scripts/test-live.js",
+    "test": "node scripts/check-syntax.js && node scripts/check-docs.js && node scripts/test-portfolio.js && node scripts/test-settings.js && node scripts/test-rsi.js && node scripts/test-rsi-filter.js && node scripts/test-24h-filter.js && node scripts/test-live.js && export COIN_SURFER_DATA_DIR=\"$(mktemp -d)/data\" && node scripts/test-auth.js && export COIN_SURFER_DATA_DIR=\"$(mktemp -d)/data\" && node scripts/test-multitenant.js",
     "inspect": "node scripts/inspect.js",
     "watch": "node scripts/watch.js"
   },

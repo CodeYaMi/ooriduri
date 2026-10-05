@@ -8,7 +8,7 @@
 | 최종 갱신 | 2026-09-28 |
 | 버전 | 1.0.0 |
 | 코드 규모 | 7,195줄 (server + web + scripts) |
-| 테스트 | 347개 / 전부 통과 |
+| 테스트 | 458개 / 전부 통과 |
 | 런타임 | Node 20+ (검증 환경 v22.22.2) |
 
 ---
@@ -81,23 +81,32 @@
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │  브라우저 (React 18 + Vite)                                  │
+│    ├─ Login          최초 마스터 설정 + 로그인                │
 │    ├─ MarketTable    급등 후보 (RSI 게이지, 거래량 막대)      │
 │    ├─ PortfolioPanel 보유 포지션 (익절/손절 진행률)           │
 │    ├─ PriceChart     캔버스 차트 (rAF + ResizeObserver)       │
-│    ├─ SettingsModal  29개 설정 항목                          │
-│    └─ AccountModal   API 키 / 실거래 전환                    │
+│    ├─ SettingsModal  29개 설정 항목 (계정별)                  │
+│    ├─ AccountModal   API 키 / 실거래 전환 (계정별)            │
+│    ├─ MasterPanel    전체 현황·사용자·거래계정·전체 로그       │
+│    └─ EventLog       본인 계정 이벤트                         │
 └──────────────┬───────────────────────────┬───────────────────┘
-      WS /ws    │ state(1Hz) live(0.25Hz)   │ REST /api/*
-┌──────────────▼───────────────────────────▼───────────────────┐
+ WS /ws?token=  │ state(1Hz/계정) live      │ REST /api/* (Bearer)
+┌──────────────▼───────────────────────────┴───────────────────┐
 │  Node 서버 (Express 4)                                       │
 │                                                              │
-│   index.js ──── 라우팅 + WS 브로드캐스트 + 정적 파일          │
+│   index.js ──── 인증·계정 스코프·마스터 라우트 + WS 분배      │
 │      │                                                       │
-│      ├── engine.js ─── 오케스트레이션 (비동기 싱글)           │
-│      │     ├── scanner.js  ── 1분봉 히스토리 + 지표 계산     │
+│      ├── market.js ─── 공유 시장 계층 (인스턴스 1개)          │
+│      │     시세·분봉 폴링, WS 스트림, 스캐너 히스토리          │
+│      │                                                       │
+│      ├── trader.js ─── 계정별 트레이더 (계정당 1개)            │
 │      │     ├── portfolio.js ── 손익 판정 (모드 무관)          │
-│      │     └── broker.js    ── 실거래 주문 + 포지션 동기화    │
+│      │     ├── broker.js    ── 실거래 주문 + 포지션 동기화    │
+│      │     ├── scanner 평가 ── 공유 히스토리 + 계정별 윈도우  │
+│      │     └── events.jsonl ── 계정별 이벤트 로그            │
 │      │                                                       │
+│      ├── auth.js ── 사용자·세션·scrypt·로그인 제한            │
+│      ├── accounts.js ── 거래계정 저장소·로그·레거시 승계      │
 │      ├── credentials.js ── API 키 저장(600) + 실거래 무장     │
 │      ├── config.js      ── 설정 스키마/검증/영속화            │
 │      └── binance/                                               │
@@ -118,37 +127,60 @@
 | `scanner.js` | 분봉 히스토리, z-score/RSI/배수 계산, 후보 랭킹 | 매수 실행 |
 | `portfolio.js` | 포지션 상태, 손익 계산, 진입 관문, 청산 판정 | 실제 주문 |
 | `broker.js` | 서명 요청, 주문 체결, 포지션 동기화 | 전략 판단 |
-| `engine.js` | 타이머, 피드 연결, 스캔 → 매수 연결, 청산 실행 | UI concerns |
-| `index.js` | HTTP/WS 라우팅, 브로드캐스트 | 비즈니스 로직 |
+| `market.js` | 시세·분봉 수집, 스트림, 히스토리 (전 계정 공유) | 계정별 판단 |
+| `trader.js` | 계정별 설정·주문·청산·이벤트·스냅샷 | 다른 계정 데이터 |
+| `auth.js` | 사용자·세션·비밀번호 해시·로그인 시도 제한 | 거래 로직 |
+| `accounts.js` | 거래계정 메타·이벤트 로그·레거시 승계 | 인증 |
+| `index.js` | 인증·스코프·마스터 라우트·WS 분배 | 비즈니스 로직 |
 
 ### 2.3 핵심 데이터 흐름
 
 ```
-[수집]  REST klines 1m → scanner.syncBar() → bars[]/closes[] 누적
-         WS bookTicker → prices/orderBook 갱신 (실시간)
+[수집, 1회] REST klines 1m → hub.scanner.syncBar() → bars[]/closes[] 누적
+            WS bookTicker → hub.prices/orderBook 갱신 (실시간)
 
-[판정]  스캔 타이머(60s) → scanner.rank()
-         ├─ 유동성 필터 (24h 거래대금, 분당 거래대금)
-         ├─ 급등 필터 (ratio ≥ 2, z ≥ 2)
-         ├─ 24h 변동 필터 (≥ 0%)      ← 신규
-         └─ RSI 필터 (45~75)
-         → 상위 N개 = candidates
+[판정, 계정별] 스캔 타이머(계정별 주기) → scanner.rank(공유 히스토리 + 계정별 윈도우)
+            ├─ 유동성 필터 (24h 거래대금, 분당 거래대금)
+            ├─ 급등 필터 (ratio ≥ 2, z ≥ 2)
+            ├─ 24h 변동 필터 (≥ 0%)
+            └─ RSI 필터 (45~75)
+            → 상위 N개 = candidates (계정별)
 
-[실행]  autoBuy() → portfolio.buy() → checkEntryGate() → broker/시뮬레이션
-         1초 틱 → portfolio.update() → checkExit() → 청산
+[실행, 계정별] autoBuy() → portfolio.buy() → checkEntryGate() → broker/시뮬레이션
+            1초 틱 → portfolio.update() → checkExit() → 청산
+            매수·매도·오류 → events.jsonl (계정별)
 ```
 
 ### 2.4 타이머
 
-| 타이머 | 주기 | 역할 |
-|---|---|---|
-| `marketTimer` | 10초 | REST `ticker/24hr` → 24h 통계/가격 폴백 |
-| `barTimer` | 20초 | REST `klines` 1m → 확정봉 적재 (급등 판정의 유일한 근거) |
-| `scanTimer` | 60초 (설정 가능) | 후보 랭킹 + 자동 매수 |
-| `stateTimer` | 1초 | 포지션 가격 반영 + 청산 판정 + 전체 스냅샷 브로드캐스트 |
-| `liveTimer` | 250ms | 실시간 가격만 전송 (부드러운 UI) |
-| `liveTimer`(실거래) | 20초 | 잔고 갱신 + 포지션 동기화 |
-| `persistTimer` | 30초 | 포트폴리오 상태 JSON 저장 |
+| 타이머 | 주기 | 범위 | 역할 |
+|---|---|---|---|
+| `marketTimer` | 전 계정 중 최소값 | 공유 | REST `ticker/24hr` → 24h 통계/가격 폴백 |
+| `barTimer` | 전 계정 중 최소값 | 공유 | REST `klines` 1m → 확정봉 적재 |
+| `scanTimer` | 계정별 설정 | 계정별 | 후보 랭킹 + 자동 매수 |
+| `stateTimer` | 1초 | 전체 | 전 Trader 가격 반영 + 청산 + 계정별 스냅샷 |
+| `liveTimer` | 250ms | 전체 | 실시간 가격만 전송 (비밀정보 없음) |
+| 실거래 타이머 | 20초 | 계정별 | 잔고 갱신 + 포지션 동기화 |
+| `persistTimer` | 30초 | 계정별 | 포트폴리오 상태 JSON 저장 |
+
+### 2.5 인증 · 계정 모델
+
+```
+사용자 (users.json)          거래 계정 (accounts/<id>/)
+├─ id / name / role          ├─ meta.json (이름·소유자·정지)
+├─ master | user              ├─ settings.json (계정별 전략)
+├─ scrypt 해시 + 솔트         ├─ portfolio.json (계정별 자산)
+└─ disabled                   ├─ credentials.json (계정별 API 키, 600)
+                              ├─ live-armed.json (계정별 무장)
+세션 (sessions.json)          └─ events.jsonl (계정별 로그)
+└─ sha256(토큰) · 7일 만료
+```
+
+- 마스터: 전 계정 열람 + 사용자/계정 관리 + 전체 로그. **단 API 시크릿 원문은 제외.**
+- 일반: 본인 소유 활성 계정만. 정지된 계정은 목록에서 숨김.
+- 로그인 시도 5회/분 초과 시 429.
+- 최초 실행 시 사용자 0명 → `/api/auth/setup` 으로 마스터 생성 + 레거시 승계.
+- `COIN_SURFER_DATA_DIR` 환경변수로 데이터 디렉터리 변경 가능 (테스트 격리용).
 
 ---
 
@@ -508,7 +540,33 @@ stepSize 미배수         → 내림 후 반올림 처리
 | GET | `/api/trades` | 청산 내역 |
 | GET | `/api/universe` | 거래 가능 종목 |
 
-### 7.2 계정 / 실거래
+### 7.2 인증 / 사용자 (신규)
+
+모든 `/api/*` (health·auth 제외)는 `Authorization: Bearer <토큰>` 필수.
+거래 계정 스코프는 `?account=<id>` (없으면 본인 기본 계정).
+
+| 메서드 | 경로 | 설명 |
+|---|---|---|
+| GET | `/api/auth/status` | `{setupRequired}` (공개) |
+| POST | `/api/auth/setup` | 최초 마스터 생성 + 레거시 승계 (사용자 0명일 때만) |
+| POST | `/api/auth/login` | `{name, password}` → 토큰 (시도 제한 5회/분) |
+| POST | `/api/auth/logout` | 세션 무효화 |
+| GET | `/api/auth/me` | 본인 + 가시 계정 + 기본 계정 |
+| GET | `/api/users` | 사용자 목록 (마스터) |
+| POST | `/api/users` | 사용자 생성 + 기본 거래계정 (마스터) |
+| POST | `/api/users/:id/password` | 비밀번호 재설정 (마스터, 세션 무효화) |
+| POST | `/api/users/:id/disabled` | 정지/활성 (마스터, 마지막 마스터 보호) |
+| DELETE | `/api/users/:id` | 삭제 (마스터, 본인·마지막 마스터 보호) |
+| GET | `/api/trading-accounts` | 가시 거래계정 목록 |
+| POST | `/api/trading-accounts` | 거래계정 생성 (일반은 본인 소유만) |
+| PATCH | `/api/trading-accounts/:id` | 이름 변경 |
+| POST | `/api/trading-accounts/:id/disabled` | 정지/재개 (마스터) |
+| DELETE | `/api/trading-accounts/:id` | 삭제 (포지션 보유 시 차단) |
+| GET | `/api/admin/overview` | 전 계정 현황 (마스터) |
+| GET | `/api/admin/events` | 전 계정 이벤트 합산 (마스터, `accountId·type·q·limit·before`) |
+| GET | `/api/events` | 본인 계정 이벤트 |
+
+### 7.3 계정 / 실거래
 
 | 메서드 | 경로 | 설명 |
 |---|---|---|
@@ -523,16 +581,17 @@ stepSize 미배수         → 내림 후 반올림 처리
 | POST | `/api/account/sync` | 포지션 동기화 |
 | GET | `/api/account/filters?symbol=` | 거래 규격 (stepSize 등) |
 
-### 7.3 WebSocket (`/ws`)
+### 7.4 WebSocket (`/ws?token=`)
+
+토큰 없이 접속하면 4401 로 종료된다.
 
 | 타입 | 주기 | 내용 |
 |---|---|---|
-| `state` | 1초 | 전체 스냅샷 (설정·요약·포지션·후보·거래·진단) |
-| `live` | 0.25초 | 추적 종목 실시간 가격 |
-| `status` | 이벤트 | 피드 상태 변경 |
-| `toast` | 이벤트 | 거래 알림 |
+| `state` | 1초/계정 | 계정별 스냅샷 (`accountId` 포함, 가시 계정만 전송) |
+| `live` | 0.25초 | 추적 종목 실시간 가격 (전 계정 공유, 비밀정보 없음) |
+| `toast` | 이벤트 | 거래 알림 (`accountId` 포함, 가시 계정만 전송) |
 
-### 7.4 바이낸스 오류 코드 매핑
+### 7.5 바이낸스 오류 코드 매핑
 
 | 코드 | 사용자 메시지 |
 |---|---|
@@ -616,7 +675,27 @@ rAF 가 백그라운드 탭에서 멈춰 크기 설정이 실행되지 않음.
 SIGKILL. 종료 핸들러 메시지도 없었으므로 SIGTERM 이 아님을 확인.
 → `scripts/daemon.js` (detached + unref, PPID=1) 도입.
 
-### 8.6 테스트로 막을 수 있었던 회귀
+### 8.6 멀티 계정 (4건)
+
+**⑬ `resolveSession` 이 해시 포함 원본 반환**
+세션 해석 결과가 그대로 응답에 실릴 수 있어 비밀번호 해시가 노출될 뻔함.
+→ `publicUser()` 로 감싸서 반환. 테스트로 고정.
+
+**⑭ 삭제 실패 시 포지션 부활**
+거래계정 삭제 라우트가 검증 전에 언마운트 → 삭제 실패 시 재마운트하면서
+오래된 파일에서 포지션이 부활함 (메모리 삭제분 소실).
+→ 메모리 우선 검증 → 파일 확정 → 언마운트 → 삭제 순서로 변경.
+
+**⑮ React 훅 순서 위반 (#310)**
+`useMemo` 2개가 early return 뒤에 있어 로그인 직후 크래시.
+→ 모든 훅을 early return 앞으로 이동.
+
+**⑯ 스캐너 윈도우 공유 문제**
+공유 히스토리 위에서 `evaluate()` 가 인스턴스 윈도우를 써서
+계정별 `recentWindowMinutes` 가 무시될 뻔함.
+→ `evaluate(symbol, opts)` 로 계정별 윈도우 명시 전달 (하위 호환 유지).
+
+### 8.7 테스트로 막을 수 있었던 회귀
 
 | 회귀 | 발견 방법 |
 |---|---|
@@ -624,6 +703,7 @@ SIGKILL. 종료 핸들러 메시지도 없었으므로 SIGTERM 이 아님을 확
 | `await pf.buy().error` 우선순위 오류 | `npm test` |
 | 모달 저장 후 입력 필드가 사라지지 않음 | 브라우저 확인 |
 | 실거래 배지가 "가상" 과 불일치 | 브라우저 확인 |
+| 계정 삭제 실패 후 포지션 부활 | API E2E (청산→삭제 흐름) |
 
 ---
 
@@ -635,7 +715,7 @@ SIGKILL. 종료 핸들러 메시지도 없었으므로 SIGTERM 이 아님을 확
 npm test
 ```
 
-### 9.2 구성 (347개)
+### 9.2 구성 (458개)
 
 | 스크립트 | 개수 | 대상 |
 |---|---|---|
@@ -647,6 +727,8 @@ npm test
 | `test-rsi-filter.js` | 30 | RSI 필터 동작, 임계값 변화, 근접 진단 |
 | `test-24h-filter.js` | 26 | 24h 진입 차단 + **[핵심] 청산 영향 없음** |
 | `test-live.js` | 63 | 실거래 주문·동기화·잔고·오류 전파·**주문 시뮬레이션**·확인 게이트 |
+| `test-auth.js` | 33 | 해시·마스터 보호·세션·만료·정지·시도 제한 |
+| `test-multitenant.js` | 53 | 설정/포트폴리오/이벤트 격리·가시성·마이그레이션·삭제 가드 |
 
 > `check-docs.js` 는 문서가 실제로 쓰이는 중요한 장치입니다.
 > 개발 중 실제로 다음을 잡아냈습니다.

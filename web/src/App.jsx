@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useEngineSocket } from './hooks/useEngineSocket.js';
-import { api } from './lib/api.js';
+import { api, setAuthToken, getAuthToken, setActiveAccount, getActiveAccount, onAuthExpired } from './lib/api.js';
 
 import { Header } from './components/Header.jsx';
 import { MarketTable } from './components/MarketTable.jsx';
@@ -9,27 +9,90 @@ import { SettingsModal } from './components/SettingsModal.jsx';
 import { AccountModal } from './components/AccountModal.jsx';
 import { PriceChart } from './components/PriceChart.jsx';
 import { TradeLog } from './components/TradeLog.jsx';
+import { EventLog } from './components/EventLog.jsx';
+import { MasterPanel } from './components/MasterPanel.jsx';
+import { AuthScreen } from './components/Login.jsx';
 import { Toasts } from './components/Toasts.jsx';
 
 export default function App() {
-  const { state, live, toasts, connected, pushToast } = useEngineSocket();
+  const [token, setToken] = useState(() => getAuthToken());
+  const [session, setSession] = useState(null); // { user, accounts, defaultAccountId }
+  const [setupRequired, setSetupRequired] = useState(null);
+  const [activeAccountId, setActiveAccountId] = useState(() => getActiveAccount());
+
+  const { states, live, toasts, connected, authError, pushToast } = useEngineSocket(token);
 
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [accountOpen, setAccountOpen] = useState(false);
+  const [masterOpen, setMasterOpen] = useState(false);
   const [config, setConfig] = useState(null);
   const [account, setAccount] = useState(null);
   const [selected, setSelected] = useState(null);
   const [busy, setBusy] = useState(false);
   const [scanning, setScanning] = useState(false);
 
+  const user = session?.user ?? null;
+  const isMaster = user?.role === 'master';
+  const tradingAccounts = useMemo(() => session?.accounts ?? [], [session]);
+
+  // 활성 계정 검증 — 목록에 없으면 기본값으로
+  useEffect(() => {
+    if (!tradingAccounts.length) return;
+    if (!tradingAccounts.some((a) => a.id === activeAccountId)) {
+      const fallback = tradingAccounts[0].id;
+      setActiveAccountId(fallback);
+      setActiveAccount(fallback);
+    }
+  }, [tradingAccounts, activeAccountId]);
+
+  const state = (activeAccountId && states[activeAccountId]) || null;
   const settings = state?.settings;
   // 실거래 여부 (useEngineSocket 가 반환하는 live 는 실시간 가격 맵이므로 이름을 분리한다)
   const isLiveMode = Boolean(state?.summary?.live);
 
-  // 설정 스키마 로드
+  // ── 세션 부트스트랩 ──────────────────────────────────────────
   useEffect(() => {
-    api.getSettings().then(setConfig).catch((err) => pushToast({ level: 'warn', text: `설정 로드 실패: ${err.message}` }));
+    api.authStatus().then(
+      (r) => {
+        setSetupRequired(r.setupRequired);
+        if (!r.setupRequired && getAuthToken()) {
+          api.me().then(
+            (me) => {
+              setSession({ user: me.user, accounts: me.accounts, defaultAccountId: me.defaultAccountId });
+              if (!getActiveAccount() && me.defaultAccountId) setActiveAccount(me.defaultAccountId);
+              setActiveAccountId(getActiveAccount() || me.defaultAccountId || '');
+            },
+            () => {
+              setAuthToken('');
+              setToken('');
+            },
+          );
+        }
+      },
+      () => setSetupRequired(false),
+    );
+  }, []);
+
+  // 401 → 세션 만료 처리
+  useEffect(() => {
+    onAuthExpired(() => {
+      setToken('');
+      setSession(null);
+      pushToast({ level: 'warn', text: '세션이 만료되었습니다. 다시 로그인하세요.' });
+    });
   }, [pushToast]);
+
+  // 설정 스키마 로드 (계정 변경 시마다)
+  useEffect(() => {
+    if (!token || !activeAccountId) return;
+    api.getSettings().then(setConfig).catch((err) => pushToast({ level: 'warn', text: `설정 로드 실패: ${err.message}` }));
+  }, [pushToast, token, activeAccountId]);
+
+  // 바이낸스 연결 상태 로드 (계정 변경 시마다)
+  useEffect(() => {
+    if (!token || !activeAccountId) return;
+    api.getAccount().then(setAccount).catch(() => setAccount(null));
+  }, [token, activeAccountId]);
 
   // 선택 종목 자동 추종
   useEffect(() => {
@@ -38,12 +101,13 @@ export default function App() {
     if (first) setSelected(first);
   }, [state, selected]);
 
-  // Escape 로 두 모달 모두 닫기
+  // Escape 로 모달 닫기
   useEffect(() => {
     const onKey = (e) => {
       if (e.key !== 'Escape') return;
       setSettingsOpen(false);
       setAccountOpen(false);
+      setMasterOpen(false);
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
@@ -61,82 +125,46 @@ export default function App() {
     }
   }, [pushToast]);
 
-  const handleSaveSettings = useCallback(
-    (payload) =>
-      withBusy(async () => {
-        const res = await api.saveSettings(payload);
-        for (const w of res.warnings ?? []) pushToast({ level: 'warn', text: w });
-        pushToast({ level: 'info', text: '설정을 저장했습니다. 다음 틱부터 적용됩니다.' });
-        setSettingsOpen(false);
-      }, 'error'),
-    [withBusy, pushToast],
-  );
+  const handleAuthDone = useCallback((res) => {
+    setToken(res.token);
+    setSession({ user: res.user, accounts: res.accounts, defaultAccountId: res.defaultAccountId });
+    const first = res.defaultAccountId ?? res.accounts?.[0]?.id ?? '';
+    setActiveAccountId(first);
+    setActiveAccount(first);
+    setSelected(null);
+  }, []);
 
-  const handleResetSettings = useCallback(
-    () =>
-      withBusy(async () => {
-        const res = await api.resetSettings();
-        setConfig((prev) => (prev ? { ...prev, settings: res.settings } : prev));
-        pushToast({ level: 'info', text: '설정을 기본값으로 되돌렸습니다.' });
-        setSettingsOpen(false);
-      }),
-    [withBusy, pushToast],
-  );
-
-  const handleToggleEngine = useCallback(
-    () =>
-      withBusy(async () => {
-        const running = state?.running;
-        const res = await api.engine(running ? 'stop' : 'start');
-        pushToast({ level: 'info', text: running ? '자동 매매를 일시정지했습니다.' : '자동 매매를 시작했습니다.' });
-        return res;
-      }),
-    [state, withBusy, pushToast],
-  );
-
-  const handleResetPortfolio = useCallback(() => {
-    if (isLiveMode) {
-      pushToast({ level: 'warn', text: '실거래 모드에서는 가상 자산을 초기화할 수 없습니다. 계정 화면에서 실거래를 해제하세요.' });
-      return;
-    }
-    if (!window.confirm('가상 자산을 초기 자본으로 리셋할까요? 보유 포지션과 거래 내역이 모두 사라집니다.')) return;
-    withBusy(() => api.resetPortfolio());
-  }, [withBusy, isLiveMode, pushToast]);
-
-  const handleSell = useCallback(
-    (symbol) =>
-      withBusy(async () => {
-        await api.sell(symbol);
-        return true;
-      }, 'error'),
-    [withBusy],
-  );
-
-  const handleManualBuy = useCallback(
-    (symbol) =>
-      withBusy(async () => {
-        await api.buy(symbol);
-        return true;
-      }, 'error'),
-    [withBusy],
-  );
-
-  const handleCloseAll = useCallback(() => {
-    const msg = isLiveMode
-      ? '거래소에서 실제 포지션 전부를 시장가로 청산합니다. 계속할까요?'
-      : '보유 중인 모든 포지션을 시장가로 청산할까요?';
-    if (!window.confirm(msg)) return;
-    withBusy(() => api.closeAll());
-  }, [withBusy, isLiveMode]);
-
-  const handleScan = useCallback(() => {
-    setScanning(true);
+  const handleLogout = useCallback(() => {
     withBusy(async () => {
-      await api.engine('scan');
-      setTimeout(() => setScanning(false), 800);
-    }).finally(() => setScanning(false));
+      try {
+        await api.logout();
+      } catch {
+        /* 토큰이 이미 무효해도 로컬은 정리 */
+      }
+      setAuthToken('');
+      setToken('');
+      setSession(null);
+      setConfig(null);
+      setAccount(null);
+    });
   }, [withBusy]);
 
+  const handleSelectAccount = useCallback((id) => {
+    setActiveAccountId(id);
+    setActiveAccount(id);
+    setSelected(null);
+  }, []);
+
+  const refreshSession = useCallback(async () => {
+    try {
+      const me = await api.me();
+      setSession({ user: me.user, accounts: me.accounts, defaultAccountId: me.defaultAccountId });
+    } catch {
+      /* 무시 */
+    }
+  }, []);
+
+  // 파생 상태 — early return 보다 반드시 먼저 (Rules of Hooks)
   const candidates = state?.candidates ?? [];
   const positions = state?.positions ?? [];
   const trades = state?.trades ?? [];
@@ -151,16 +179,123 @@ export default function App() {
     [account, state?.account, state?.summary, isLiveMode],
   );
 
-  if (!state) {
+  // ── 인증 게이트 ──────────────────────────────────────────────
+  if (setupRequired === null) {
     return (
       <div className="boot">
         <div className="boot-inner">
           <div className="brand-mark big">◈</div>
           <h1>Coin Surfer</h1>
-          <p>{connected ? '서버에 연결되었습니다. 시세를 불러오는 중…' : '서버에 연결 중…'}</p>
+          <p>서버에 연결 중…</p>
           <div className="boot-spinner" />
         </div>
+      </div>
+    );
+  }
+
+  if (!token || !session) {
+    return (
+      <div className="app">
+        <AuthScreen setupRequired={setupRequired} onDone={handleAuthDone} pushToast={pushToast} />
         <Toasts toasts={toasts} />
+      </div>
+    );
+  }
+
+  const handleSaveSettings = (payload) =>
+    withBusy(async () => {
+      const res = await api.saveSettings(payload);
+      for (const w of res.warnings ?? []) pushToast({ level: 'warn', text: w });
+      pushToast({ level: 'info', text: '설정을 저장했습니다. 다음 틱부터 적용됩니다.' });
+      setSettingsOpen(false);
+    }, 'error');
+
+  const handleResetSettings = () =>
+    withBusy(async () => {
+      const res = await api.resetSettings();
+      setConfig((prev) => (prev ? { ...prev, settings: res.settings } : prev));
+      pushToast({ level: 'info', text: '설정을 기본값으로 되돌렸습니다.' });
+      setSettingsOpen(false);
+    });
+
+  const handleToggleEngine = () =>
+    withBusy(async () => {
+      const running = state?.running;
+      const res = await api.engine(running ? 'stop' : 'start');
+      pushToast({ level: 'info', text: running ? '자동 매매를 일시정지했습니다.' : '자동 매매를 시작했습니다.' });
+      return res;
+    });
+
+  const handleResetPortfolio = () => {
+    if (isLiveMode) {
+      pushToast({ level: 'warn', text: '실거래 모드에서는 가상 자산을 초기화할 수 없습니다. 계정 화면에서 실거래를 해제하세요.' });
+      return;
+    }
+    if (!window.confirm('가상 자산을 초기 자본으로 리셋할까요? 보유 포지션과 거래 내역이 모두 사라집니다.')) return;
+    withBusy(() => api.resetPortfolio());
+  };
+
+  const handleSell = (symbol) =>
+    withBusy(async () => {
+      await api.sell(symbol);
+      return true;
+    }, 'error');
+
+  const handleManualBuy = (symbol) =>
+    withBusy(async () => {
+      await api.buy(symbol);
+      return true;
+    }, 'error');
+
+  const handleCloseAll = () => {
+    const msg = isLiveMode
+      ? '거래소에서 실제 포지션 전부를 시장가로 청산합니다. 계속할까요?'
+      : '보유 중인 모든 포지션을 시장가로 청산할까요?';
+    if (!window.confirm(msg)) return;
+    withBusy(() => api.closeAll());
+  };
+
+  const handleScan = () => {
+    setScanning(true);
+    withBusy(async () => {
+      await api.engine('scan');
+      setTimeout(() => setScanning(false), 800);
+    }).finally(() => setScanning(false));
+  };
+
+  if (!state) {
+    return (
+      <div className="app">
+        <Header
+          state={null}
+          connected={connected}
+          onOpenSettings={() => setSettingsOpen(true)}
+          onOpenAccount={() => setAccountOpen(true)}
+          onToggleEngine={handleToggleEngine}
+          onReset={handleResetPortfolio}
+          busy={busy}
+          user={user}
+          accounts={tradingAccounts}
+          activeAccountId={activeAccountId}
+          onSelectAccount={handleSelectAccount}
+          onLogout={handleLogout}
+          onOpenMaster={() => setMasterOpen(true)}
+        />
+        <div className="boot">
+          <div className="boot-inner">
+            <div className="brand-mark big">◈</div>
+            <h1>Coin Surfer</h1>
+            <p>
+              {authError
+                ? '인증에 실패했습니다. 다시 로그인하세요.'
+                : connected
+                  ? '시세를 불러오는 중…'
+                  : '서버에 연결 중…'}
+            </p>
+            <div className="boot-spinner" />
+            <Toasts toasts={toasts} />
+          </div>
+        </div>
       </div>
     );
   }
@@ -177,6 +312,12 @@ export default function App() {
         onToggleEngine={handleToggleEngine}
         onReset={handleResetPortfolio}
         busy={busy}
+        user={user}
+        accounts={tradingAccounts}
+        activeAccountId={activeAccountId}
+        onSelectAccount={handleSelectAccount}
+        onLogout={handleLogout}
+        onOpenMaster={() => setMasterOpen(true)}
       />
 
       <main className="layout">
@@ -211,6 +352,8 @@ export default function App() {
         />
 
         <TradeLog trades={trades} />
+
+        <EventLog accountId={activeAccountId} />
 
         <aside className="panel side-panel">
           <div className="panel-head">
@@ -306,9 +449,14 @@ export default function App() {
         onClose={() => setAccountOpen(false)}
         onChanged={() => {
           api.getAccount().then(setAccount).catch(() => {});
+          refreshSession();
         }}
         pushToast={pushToast}
       />
+
+      {isMaster ? (
+        <MasterPanel open={masterOpen} onClose={() => setMasterOpen(false)} pushToast={pushToast} myUserId={user.id} />
+      ) : null}
 
       <Toasts toasts={toasts} />
     </div>

@@ -186,13 +186,19 @@ export class VolumeScanner {
     return entry.liveBar.volume / elapsed;
   }
 
-  /** 특정 종목의 z-score / 배수 / RSI 계산 */
-  evaluate(symbol, rsiPeriod = this.rsiPeriod) {
+  /**
+   * 특정 종목의 z-score / 배수 / RSI 계산.
+   * @param {object|number} [opts] 윈도우 지정. 숫자면 rsiPeriod 로 간주 (하위 호환).
+   *   공유 히스토리 위에서 계정별 설정으로 평가할 때 사용한다.
+   */
+  evaluate(symbol, opts = {}) {
     const entry = this.history.get(symbol);
     if (!entry) return null;
 
-    const R = this.recentWindowMinutes;
-    const L = this.lookbackMinutes;
+    const o = typeof opts === 'number' ? { rsiPeriod: opts } : opts;
+    const rsiPeriod = o.rsiPeriod ?? this.rsiPeriod;
+    const R = o.recentWindowMinutes ?? this.recentWindowMinutes;
+    const L = o.lookbackMinutes ?? this.lookbackMinutes;
     const bars = entry.bars;
 
     if (bars.length < R + 5) return null; // 최소 표본 부족
@@ -260,7 +266,11 @@ export class VolumeScanner {
       if (!stat) continue;
       if (stat.quoteVolume < min24hQuoteVolumeUSDT) continue;
 
-      const metrics = this.evaluate(symbol, settings.rsiPeriod ?? this.rsiPeriod);
+      const metrics = this.evaluate(symbol, {
+        rsiPeriod: settings.rsiPeriod ?? this.rsiPeriod,
+        recentWindowMinutes: settings.recentWindowMinutes ?? this.recentWindowMinutes,
+        lookbackMinutes: settings.lookbackMinutes ?? this.lookbackMinutes,
+      });
       if (!metrics) continue;
       if (metrics.recentAvg < minMinuteQuoteVolumeUSDT) continue;
       if (metrics.ratio < surgeRatioThreshold) continue;
@@ -339,7 +349,11 @@ export class VolumeScanner {
       const stat = marketStats.get(symbol);
       if (!stat || stat.quoteVolume < min24hQuoteVolumeUSDT) continue;
 
-      const m = this.evaluate(symbol, settings.rsiPeriod ?? this.rsiPeriod);
+      const m = this.evaluate(symbol, {
+        rsiPeriod: settings.rsiPeriod ?? this.rsiPeriod,
+        recentWindowMinutes: settings.recentWindowMinutes ?? this.recentWindowMinutes,
+        lookbackMinutes: settings.lookbackMinutes ?? this.lookbackMinutes,
+      });
       if (!m || m.recentAvg < minMinuteQuoteVolumeUSDT) continue;
 
       // 통과 조건 중 어긋난 항목만 모은다

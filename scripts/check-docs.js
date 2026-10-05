@@ -16,7 +16,8 @@ const dev = read('DEVELOPMENT.md');
 const readme = read('README.md');
 const portfolio = read('server/src/portfolio.js');
 const scanner = read('server/src/scanner.js');
-const engine = read('server/src/engine.js');
+const market = read('server/src/market.js');
+const trader = read('server/src/trader.js');
 const privateJs = read('server/src/binance/private.js');
 const creds = read('server/src/credentials.js');
 
@@ -114,15 +115,16 @@ has('시크릿 권한 600', creds, '0o600');
 has('재시작 시 자동 해제', creds, 'resetLiveOnBoot');
 
 console.log('\n── 타이머 주기 문서 일치 ──');
-has('market 10초 폴링', engine, 'marketPollSec');
-has('bar 20초 폴링', engine, 'barPollSec');
-has('실거래 20초 동기화', engine, '20_000');
+has('market 10초 폴링', market, 'marketPollSec');
+has('bar 20초 폴링', market, 'barPollSec');
+has('실거래 20초 동기화', trader, '20_000');
+has('계정별 스냅샷에 accountId 포함', trader, 'accountId');
 has('상태 1초', read('server/src/index.js'), '1000');
 has('live 250ms', read('server/src/index.js'), '250');
 
 console.log('\n── 테스트 개수 일치 ──');
 const testFiles = fs.readdirSync(path.join(ROOT, 'scripts')).filter((f) => f.startsWith('test-'));
-check('테스트 스크립트 수', testFiles.length, 7);
+check('테스트 스크립트 수', testFiles.length, 9);
 has('check-syntax 가 test 에 포함', read('package.json'), 'check-syntax.js');
 has('test-24h-filter 가 test 에 포함', read('package.json'), 'test-24h-filter.js');
 has('test-live 가 test 에 포함', read('package.json'), 'test-live.js');

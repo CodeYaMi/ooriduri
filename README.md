@@ -1,12 +1,14 @@
 # Coin Surfer
 
-바이낸스 **USDⓈ-M 선물** 시세를 이용해 **거래량 급등 종목**을 찾아 **가상(시뮬레이션) 투자**하는 대시보드입니다.
+바이낸스 **USDⓈ-M 선물** 시세를 이용해 **거래량 급등 종목**을 찾아 투자하는 대시보드입니다.
+**계정별로 독립 운영**되며, 마스터는 전 계정을 한눈에 관리할 수 있습니다.
 
 - 실시간 가격 표시 (호가 스트림)
-- 1분봉 거래량 **z-score + 배수** 기준 급등 탐지 → 상위 10종목 선별
+- 1분봉 거래량 **z-score + 배수 + RSI + 24h 변동** 기준 급등 탐지
 - 자동 매수 → **익절 +10% / 손절 −5%** 청산 (수익·손절 기준은 설정 창에서 자유롭게 변경)
 - 값은 **매수 체결가(진입가) 기준**으로 계산
-- 실제 주문은 발생하지 않습니다
+- 계정별 설정·포트폴리오 분리, 마스터 전체 로그 열람
+- API 키 연결 시 실제 주문 가능 (테스트넷/실계정, 주문 시뮬레이션 지원)
 
 ---
 
@@ -28,7 +30,7 @@ npm run up        # 빌드 + 백그라운드 실행 → http://localhost:8787
 | `npm run logs` | 로그 실시간 보기 (`tail -f`) |
 | `npm start` | 빌드 + **포그라운드** 실행 (Ctrl+C 로 종료) |
 | `npm run dev` | 개발 모드 — 백엔드 `:8787` + 프론트 `:5173`, 코드 수정 시 자동 반영 |
-| `npm test` | 테스트 347개 실행 |
+| `npm test` | 테스트 458개 실행 |
 
 > **왜 `npm run up` 을 쓰나요?** — `node src/index.js &` 처럼 일반 백그라운드로 띄우면
 > 띄운 터미널 세션이 정리될 때 프로세스도 함께 종료됩니다.
@@ -38,11 +40,49 @@ npm run up        # 빌드 + 백그라운드 실행 → http://localhost:8787
 기타 명령:
 
 ```bash
-npm run inspect    # 현재 엔진 상태를 터미널에 출력
-npm run watch      # 실시간 상태를 주기적으로 관찰
+CS_TOKEN=<토큰> npm run inspect         # 현재 계정 상태 출력
+CS_TOKEN=<토큰> npm run inspect <계정ID> # 특정 계정 출력
+CS_TOKEN=<토큰> npm run watch           # 실시간 상태 관찰
 ```
 
-> Node 20 이상 필요. API 키는 필요 없습니다 (공개 시세만 사용).
+토큰 발급: `curl -s -X POST localhost:8787/api/auth/login -H 'Content-Type: application/json' -d '{"name":"...","password":"..."}'`
+
+> Node 20 이상 필요. 시세 조회는 API 키 없이 가능하지만, 대시보드 사용에는 로그인이 필요합니다.
+
+---
+
+## 계정별 운영
+
+### 처음 실행하기
+
+1. 브라우저에서 `http://localhost:8787` 접속 → **마스터 계정 만들기** 화면
+2. 이름(기본 `master`) + 비밀번호(8자 이상) 입력
+3. 기존 단일 계정 데이터가 있으면 마스터의 `기본` 계정으로 자동 승계
+
+### 로그인
+
+이름 + 비밀번호로 로그인합니다. 세션은 7일간 유지됩니다.
+로그인 5회 연속 실패 시 1분간 차단됩니다.
+
+### 거래 계정
+
+- 사용자마다 `기본` 거래 계정이 자동 생성됩니다 (설정·포트폴리오·API 키·로그 분리).
+- 헤더의 계정 선택기로 전환합니다. 마스터는 전 계정을 `이름 (소유자)` 형태로 봅니다.
+- 마스터는 거래계정 탭에서 계정 추가·정지·재개·이름 변경·삭제를 할 수 있습니다.
+- 보유 포지션이 있는 계정은 삭제되지 않습니다 (먼저 전량 청산).
+
+### 마스터 패널 (♛ 마스터 버튼)
+
+| 탭 | 내용 |
+|---|---|
+| 전체 현황 | 전 계정의 모드·자산·손익·보유·후보를 한 표로 |
+| 거래계정 | 생성·정지·이름 변경·삭제 |
+| 사용자 | 생성·정지·비밀번호 변경·삭제 (마지막 마스터·본인 보호) |
+| 전체 로그 | 전 계정 이벤트 합산 (계정·유형·검색어 필터) |
+
+이벤트 로그(매수·매도·설정 변경·오류·계정)는 계정별로 기록되며,
+마스터는 전부, 일반 사용자는 본인 것만 봅니다.
+API 시크릿 원문은 마스터에게도 노출되지 않습니다.
 
 ---
 
@@ -291,9 +331,28 @@ RSI = 100 − 100 / (1 + avgGain / avgLoss)     ← Wilder 평활법, 1분봉 �
 
 ## REST API
 
+`/api/health`·`/api/auth/*` 제외 전부 `Authorization: Bearer <토큰>` 필수.
+거래 계정 스코프는 `?account=<id>` (없으면 본인 기본 계정).
+
 | 메서드 | 경로 | 설명 |
 |---|---|---|
-| GET | `/api/health` | 서버·바이낸스 연결 상태 |
+| GET | `/api/health` | 서버·바이낸스 연결 상태 (공개) |
+| GET | `/api/auth/status` | 최초 설정 필요 여부 (공개) |
+| POST | `/api/auth/setup` | 최초 마스터 생성 (공개, 1회) |
+| POST | `/api/auth/login` | 로그인 → 토큰 |
+| POST | `/api/auth/logout` | 로그아웃 |
+| GET | `/api/auth/me` | 본인 + 가시 계정 |
+| GET/POST | `/api/users` | 사용자 목록 / 생성 (마스터) |
+| POST | `/api/users/:id/password` | 비밀번호 변경 (마스터) |
+| POST | `/api/users/:id/disabled` | 정지/활성 (마스터) |
+| DELETE | `/api/users/:id` | 삭제 (마스터) |
+| GET/POST | `/api/trading-accounts` | 거래계정 목록 / 생성 |
+| PATCH | `/api/trading-accounts/:id` | 이름 변경 |
+| POST | `/api/trading-accounts/:id/disabled` | 정지/재개 (마스터) |
+| DELETE | `/api/trading-accounts/:id` | 삭제 (포지션 보유 시 차단) |
+| GET | `/api/admin/overview` | 전 계정 현황 (마스터) |
+| GET | `/api/admin/events` | 전 계정 로그 (마스터) |
+| GET | `/api/events` | 본인 계정 로그 |
 | GET | `/api/settings` | 현재 설정 + 스키마 + 기본값 |
 | PUT | `/api/settings` | 설정 저장 (검증·보정 후 적용) |
 | POST | `/api/settings/reset` | 설정 기본값 복원 |
@@ -312,7 +371,7 @@ RSI = 100 − 100 / (1 + avgGain / avgLoss)     ← Wilder 평활법, 1분봉 �
 | POST | `/api/account/disconnect` | 가상 모드로 복귀 |
 | POST | `/api/account/balance` | 잔고 갱신 |
 | POST | `/api/account/sync` | 거래소 포지션 동기화 |
-| WS | `/ws` | `state`(1초) / `live`(0.25초) / `toast` / `status` 스트림 |
+| WS | `/ws?token=` | 계정별 `state`(1초) / `live`(0.25초) / `toast` 스트림 |
 
 ---
 
@@ -322,9 +381,12 @@ RSI = 100 − 100 / (1 + avgGain / avgLoss)     ← Wilder 평활법, 1분봉 �
 coin-surfer/
 ├── server/
 │   └── src/
-│       ├── index.js              Express + WebSocket 서버
+│       ├── index.js              Express + WebSocket 서버 (인증·계정 스코프·마스터 라우트)
+│       ├── auth.js               사용자·세션·scrypt 해시·로그인 제한
+│       ├── accounts.js           거래계정 저장소·이벤트 로그·레거시 승계
+│       ├── market.js             공유 시장 계층 (시세·분봉·스캐너, 전 계정 공용)
+│       ├── trader.js             계정별 트레이더 (설정·포트폴리오·주문·로그)
 │       ├── config.js             설정 스키마 · 검증 · 영속화
-│       ├── engine.js             오케스트레이션 (피드 · 스캔 · 자동매매)
 │       ├── scanner.js            1분봉 히스토리 + z-score 급등 판정 + RSI
 │       ├── portfolio.js          포트폴리오 · 익절/손절 판정 (가상/실거래 공통)
 │       ├── broker.js             실거래 주문 체결 · 포지션 동기화
@@ -334,13 +396,14 @@ coin-surfer/
 │           ├── private.js        서명 REST 클라이언트 (HMAC) · 테스트넷/실계정
 │           └── stream.js         WS 스트림 (자동 재접속 · 자동 대체)
 ├── web/src/
-│   ├── App.jsx                   레이아웃 · 상태 연결
-│   ├── components/               Header · MarketTable · PortfolioPanel
-│   │                             SettingsModal · PriceChart · TradeLog · Toasts
-│   ├── hooks/useEngineSocket.js  WebSocket 연결 · 자동 재접속
-│   └── lib/                      api · format
+│   ├── App.jsx                   인증 게이트 · 계정 전환 · 레이아웃
+│   ├── components/               Header · MarketTable · PortfolioPanel · Login
+│   │                             SettingsModal · AccountModal · MasterPanel
+│   │                             PriceChart · TradeLog · EventLog · Toasts
+│   ├── hooks/useEngineSocket.js  계정별 WebSocket 상태 · 자동 재접속
+│   └── lib/                      api(토큰·계정 스코프) · format
 ├── scripts/                      테스트 · 점검 도구
-└── server/data/                  settings.json · portfolio.json (자동 생성)
+└── server/data/                  users.json · sessions.json · accounts/<id>/ (자동 생성)
 ```
 
 ---

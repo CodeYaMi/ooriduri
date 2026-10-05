@@ -4,12 +4,15 @@ import { fileURLToPath } from 'node:url';
 import { maskKey } from './binance/private.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const DATA_DIR = path.join(__dirname, '..', 'data');
-const CRED_FILE = path.join(DATA_DIR, 'credentials.json');
-const LIVE_FLAG_FILE = path.join(DATA_DIR, 'live-armed.json');
+const DATA_DIR = process.env.COIN_SURFER_DATA_DIR || path.join(__dirname, '..', 'data');
+// 레거시 단일 파일 (마이그레이션 전 데이터용 폴백)
+const LEGACY_DIR = DATA_DIR;
+
+const credFile = (dir) => path.join(dir, 'credentials.json');
+const liveFlagFile = (dir) => path.join(dir, 'live-armed.json');
 
 /**
- * API 자격증명 저장소.
+ * API 자격증명 저장소 (계정별 디렉터리 기준).
  *
  * 보안 정책
  *  - apiSecret 은 절대 클라이언트로 전송하지 않는다 (마스킹만 전달)
@@ -18,12 +21,12 @@ const LIVE_FLAG_FILE = path.join(DATA_DIR, 'live-armed.json');
  *  - 실거래 활성 플래그는 재시작 시 자동으로 해제된다
  */
 
-function ensureDir() {
-  if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true, mode: 0o700 });
+function ensureDir(dir) {
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
 }
 
 function writePrivate(file, data) {
-  ensureDir();
+  ensureDir(path.dirname(file));
   fs.writeFileSync(file, JSON.stringify(data, null, 2), { encoding: 'utf8', mode: 0o600 });
   try {
     fs.chmodSync(file, 0o600);
@@ -33,21 +36,22 @@ function writePrivate(file, data) {
 }
 
 /** 자격증명 저장 */
-export function saveCredentials({ apiKey, apiSecret, network }) {
+export function saveCredentials(dir, { apiKey, apiSecret, network }) {
   const creds = {
     apiKey: String(apiKey).trim(),
     apiSecret: String(apiSecret).trim(),
     network: network === 'production' ? 'production' : 'testnet',
     savedAt: Date.now(),
   };
-  writePrivate(CRED_FILE, creds);
+  writePrivate(credFile(dir), creds);
   return creds;
 }
 
-export function loadCredentials() {
+export function loadCredentials(dir) {
   try {
-    if (!fs.existsSync(CRED_FILE)) return null;
-    const raw = JSON.parse(fs.readFileSync(CRED_FILE, 'utf8'));
+    const file = credFile(dir);
+    if (!fs.existsSync(file)) return null;
+    const raw = JSON.parse(fs.readFileSync(file, 'utf8'));
     if (!raw?.apiKey || !raw?.apiSecret) return null;
     return raw;
   } catch (err) {
@@ -56,13 +60,14 @@ export function loadCredentials() {
   }
 }
 
-export function hasCredentials() {
-  return Boolean(loadCredentials());
+export function hasCredentials(dir) {
+  return Boolean(loadCredentials(dir));
 }
 
-export function deleteCredentials() {
+export function deleteCredentials(dir) {
   try {
-    if (fs.existsSync(CRED_FILE)) fs.unlinkSync(CRED_FILE);
+    const file = credFile(dir);
+    if (fs.existsSync(file)) fs.unlinkSync(file);
     return true;
   } catch (err) {
     console.error('[credentials] 삭제 실패:', err.message);
@@ -71,12 +76,12 @@ export function deleteCredentials() {
 }
 
 /** 클라이언트에 전달할 안전한 상태 (시크릿 없음) */
-export function describeCredentials() {
-  const creds = loadCredentials();
+export function describeCredentials(dir) {
+  const creds = loadCredentials(dir);
   if (!creds) {
     return { connected: false, network: null, apiKeyMasked: null, savedAt: null, liveArmed: false };
   }
-  const flag = readLiveFlag();
+  const flag = readLiveFlag(dir);
   return {
     connected: true,
     network: creds.network,
@@ -88,26 +93,28 @@ export function describeCredentials() {
   };
 }
 
-// ── 실거래 무장 플래그 ────────────────────────────────────────
+// ── 실거래 무장 플래그 (계정별) ───────────────────────────────
 
-function readLiveFlag() {
+export function readLiveFlag(dir) {
   try {
-    if (!fs.existsSync(LIVE_FLAG_FILE)) return { armed: false, network: null, at: null };
-    return JSON.parse(fs.readFileSync(LIVE_FLAG_FILE, 'utf8'));
+    const file = liveFlagFile(dir);
+    if (!fs.existsSync(file)) return { armed: false, network: null, at: null };
+    return JSON.parse(fs.readFileSync(file, 'utf8'));
   } catch {
     return { armed: false, network: null, at: null };
   }
 }
 
 /** 실거래 모드 무장 — 사용자가 명시적으로 확인해야만 true */
-export function armLive(network) {
-  writePrivate(LIVE_FLAG_FILE, { armed: true, network, at: Date.now() });
+export function armLive(dir, network) {
+  writePrivate(liveFlagFile(dir), { armed: true, network, at: Date.now() });
   return { armed: true, network, at: Date.now() };
 }
 
-export function disarmLive() {
+export function disarmLive(dir) {
   try {
-    if (fs.existsSync(LIVE_FLAG_FILE)) fs.unlinkSync(LIVE_FLAG_FILE);
+    const file = liveFlagFile(dir);
+    if (fs.existsSync(file)) fs.unlinkSync(file);
   } catch (err) {
     console.error('[credentials] 실거래 플래그 해제 실패:', err.message);
   }
@@ -115,13 +122,19 @@ export function disarmLive() {
 }
 
 /**
- * 서버 기동 시 호출 — 재시작하면 실거래가 자동으로 해제된다.
+ * 서버 기동 시 호출 — 모든 계정의 실거래 무장을 해제한다.
  * (의도치 않은 재시작 후 자동 매수로 실제 손실이 나는 것을 막는다)
+ * @param {string[]} dirs 계정 디렉터리 목록 (레거시 포함)
  */
-export function resetLiveOnBoot() {
-  const wasArmed = readLiveFlag().armed;
+export function resetLiveOnBoot(dirs = [LEGACY_DIR]) {
+  let wasArmed = false;
+  for (const dir of dirs) {
+    if (readLiveFlag(dir).armed) {
+      disarmLive(dir);
+      wasArmed = true;
+    }
+  }
   if (wasArmed) {
-    disarmLive();
     console.log('[security] 서버 재시작 감지 → 실거래 모드를 자동으로 해제했습니다.');
   }
   return wasArmed;
@@ -141,4 +154,4 @@ export function requiresConfirmation({ mode, dryRun }) {
   return mode === 'live' && !dryRun;
 }
 
-export { CRED_FILE };
+export { DATA_DIR };

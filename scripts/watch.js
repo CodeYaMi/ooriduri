@@ -6,14 +6,21 @@ import WebSocket from 'ws';
 
 const DURATION_MS = Number(process.argv[2] ?? 150_000);
 const START = Date.now();
+const BASE = process.env.WS_URL || 'ws://localhost:8787/ws';
+const token = process.env.CS_TOKEN ?? '';
+const wantAccount = process.argv[3] ?? null;
+if (!token) {
+  console.error('CS_TOKEN 이 필요합니다 (로그인 후 세션 토큰).');
+  process.exit(2);
+}
 
-const ws = new WebSocket('ws://localhost:8787/ws');
+const ws = new WebSocket(`${BASE}?token=${encodeURIComponent(token)}`);
 let last = null;
-const seen = new Map(); // symbol -> bars 길이
 
 ws.on('message', (raw) => {
   const msg = JSON.parse(raw.toString());
   if (msg.type !== 'state') return;
+  if (wantAccount && msg.accountId !== wantAccount) return;
   last = msg.data;
 });
 
