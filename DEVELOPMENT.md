@@ -87,7 +87,8 @@
 │    ├─ PriceChart     캔버스 차트 (rAF + ResizeObserver)       │
 │    ├─ SettingsModal  29개 설정 항목 (계정별)                  │
 │    ├─ AccountModal   API 키 / 실거래 전환 (계정별)            │
-│    ├─ MasterPanel    전체 현황·사용자·거래계정·전체 로그       │
+│    ├─ MasterPanel    전체 현황·거래계정·전체 로그              │
+│    ├─ UserManager    로그인 회원 관리 (별도 창)                 │
 │    └─ EventLog       본인 계정 이벤트                         │
 └──────────────┬───────────────────────────┬───────────────────┘
  WS /ws?token=  │ state(1Hz/계정) live      │ REST /api/* (Bearer)

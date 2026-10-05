@@ -24,6 +24,7 @@ export function Header({
   onSelectAccount,
   onLogout,
   onOpenMaster,
+  onOpenUsers,
 }) {
   const activeAccount = accounts?.find((a) => a.id === activeAccountId) ?? null;
   const s = state?.summary;
@@ -106,9 +107,14 @@ export function Header({
             ↺ 초기화
           </button>
           {user?.role === 'master' ? (
-            <button className="btn btn-ghost" onClick={onOpenMaster} title="전 계정 현황 · 사용자 · 전체 로그">
-              ♛ 마스터
-            </button>
+            <>
+              <button className="btn btn-ghost" onClick={onOpenMaster} title="전 계정 현황 · 거래계정 · 전체 로그">
+                ♛ 마스터
+              </button>
+              <button className="btn btn-ghost" onClick={onOpenUsers} title="로그인 회원 생성 · 비밀번호 변경 · 정지 · 삭제">
+                👥 회원 관리
+              </button>
+            </>
           ) : null}
           <span className="chip" title={`${user?.name ?? ''} (${user?.role === 'master' ? '마스터' : '일반'})`}>
             {user?.role === 'master' ? '♛ ' : ''}{user?.name ?? ''}

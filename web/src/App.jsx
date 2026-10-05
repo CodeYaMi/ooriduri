@@ -11,6 +11,7 @@ import { PriceChart } from './components/PriceChart.jsx';
 import { TradeLog } from './components/TradeLog.jsx';
 import { EventLog } from './components/EventLog.jsx';
 import { MasterPanel } from './components/MasterPanel.jsx';
+import { UserManager } from './components/UserManager.jsx';
 import { AuthScreen } from './components/Login.jsx';
 import { Toasts } from './components/Toasts.jsx';
 
@@ -25,6 +26,7 @@ export default function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [accountOpen, setAccountOpen] = useState(false);
   const [masterOpen, setMasterOpen] = useState(false);
+  const [usersOpen, setUsersOpen] = useState(false);
   const [config, setConfig] = useState(null);
   const [account, setAccount] = useState(null);
   const [selected, setSelected] = useState(null);
@@ -108,6 +110,7 @@ export default function App() {
       setSettingsOpen(false);
       setAccountOpen(false);
       setMasterOpen(false);
+      setUsersOpen(false);
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
@@ -280,6 +283,7 @@ export default function App() {
           onSelectAccount={handleSelectAccount}
           onLogout={handleLogout}
           onOpenMaster={() => setMasterOpen(true)}
+          onOpenUsers={() => setUsersOpen(true)}
         />
         <div className="boot">
           <div className="boot-inner">
@@ -318,6 +322,7 @@ export default function App() {
         onSelectAccount={handleSelectAccount}
         onLogout={handleLogout}
         onOpenMaster={() => setMasterOpen(true)}
+        onOpenUsers={() => setUsersOpen(true)}
       />
 
       <main className="layout">
@@ -455,7 +460,10 @@ export default function App() {
       />
 
       {isMaster ? (
-        <MasterPanel open={masterOpen} onClose={() => setMasterOpen(false)} pushToast={pushToast} myUserId={user.id} />
+        <>
+          <MasterPanel open={masterOpen} onClose={() => setMasterOpen(false)} pushToast={pushToast} />
+          <UserManager open={usersOpen} onClose={() => setUsersOpen(false)} pushToast={pushToast} myUserId={user.id} />
+        </>
       ) : null}
 
       <Toasts toasts={toasts} />
