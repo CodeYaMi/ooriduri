@@ -75,6 +75,7 @@ export const api = {
   klines: (symbol, interval = '1m', limit = 120) =>
     request(`/api/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`),
   trades: () => request('/api/trades'),
+  dailyTrades: (days = 30) => request(`/api/trades/daily?days=${days}`),
   universe: () => request('/api/universe'),
 
   // ── 인증 / 사용자 ──

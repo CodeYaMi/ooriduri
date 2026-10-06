@@ -1,6 +1,6 @@
 import { REASON_LABEL, fmtDuration, fmtPct, fmtPrice, fmtSignedUsd, pnlClass } from '../lib/format.js';
 
-export function TradeLog({ trades }) {
+export function TradeLog({ trades, onOpenDaily }) {
   return (
     <section className="panel">
       <div className="panel-head">
@@ -8,7 +8,12 @@ export function TradeLog({ trades }) {
           <h2>청산 내역</h2>
           <p>익절 · 손절 · 수동 매도 기록</p>
         </div>
-        <span className="chip">{trades.length}건</span>
+        <div className="panel-head-right">
+          <span className="chip">{trades.length}건</span>
+          <button className="btn btn-sm" onClick={onOpenDaily} title="날짜별 실현 손익 집계">
+            📊 일별 수익률
+          </button>
+        </div>
       </div>
 
       {trades.length === 0 ? (

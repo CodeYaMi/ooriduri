@@ -30,7 +30,7 @@ npm run up        # 빌드 + 백그라운드 실행 → http://localhost:8787
 | `npm run logs` | 로그 실시간 보기 (`tail -f`) |
 | `npm start` | 빌드 + **포그라운드** 실행 (Ctrl+C 로 종료) |
 | `npm run dev` | 개발 모드 — 백엔드 `:8787` + 프론트 `:5173`, 코드 수정 시 자동 반영 |
-| `npm test` | 테스트 458개 실행 |
+| `npm test` | 테스트 492개 실행 |
 
 > **왜 `npm run up` 을 쓰나요?** — `node src/index.js &` 처럼 일반 백그라운드로 띄우면
 > 띄운 터미널 세션이 정리될 때 프로세스도 함께 종료됩니다.
@@ -370,6 +370,7 @@ RSI = 100 − 100 / (1 + avgGain / avgLoss)     ← Wilder 평활법, 1분봉 �
 | POST | `/api/positions/:symbol/buy` \| `/sell` | 수동 매수 / 매도 |
 | GET | `/api/klines?symbol=&interval=&limit=` | 분봉 조회 |
 | GET | `/api/trades` | 청산 내역 |
+| GET | `/api/trades/daily` | 일별 실현 손익 (`days`, 기본 30) |
 | GET | `/api/universe` | 거래 가능 종목 목록 |
 | GET | `/api/account` | 저장된 자격증명 상태 (시크릿 제외) |
 | POST | `/api/account/verify` | 키 유효성 검증 (저장하지 않음) |

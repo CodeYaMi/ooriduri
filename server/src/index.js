@@ -519,6 +519,15 @@ app.get('/api/trades', requireAuth, (req, res) => {
   res.json({ trades: trader.portfolio.trades.slice(0, 200), accountId: trader.accountId });
 });
 
+/** 일별 실현 손익 집계 (청산 기준, 서버 로컬 날짜) */
+app.get('/api/trades/daily', requireAuth, (req, res) => {
+  const trader = resolveTrader(req, res);
+  if (!trader) return;
+  const days = Math.min(Math.max(Number(req.query.days) || 30, 1), 365);
+  const stats = trader.portfolio.dailyStats(days);
+  res.json({ daily: stats.days, total: stats.total, accountId: trader.accountId, periodDays: days });
+});
+
 /** 본인 계정의 이벤트 로그 */
 app.get('/api/events', requireAuth, (req, res) => {
   const trader = resolveTrader(req, res);

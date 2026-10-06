@@ -9,6 +9,7 @@ import { SettingsModal } from './components/SettingsModal.jsx';
 import { AccountModal } from './components/AccountModal.jsx';
 import { PriceChart } from './components/PriceChart.jsx';
 import { TradeLog } from './components/TradeLog.jsx';
+import { DailyPnl } from './components/DailyPnl.jsx';
 import { EventLog } from './components/EventLog.jsx';
 import { MasterPanel } from './components/MasterPanel.jsx';
 import { UserManager } from './components/UserManager.jsx';
@@ -26,6 +27,7 @@ export default function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [accountOpen, setAccountOpen] = useState(false);
   const [masterOpen, setMasterOpen] = useState(false);
+  const [dailyOpen, setDailyOpen] = useState(false);
   const [usersOpen, setUsersOpen] = useState(false);
   const [config, setConfig] = useState(null);
   const [account, setAccount] = useState(null);
@@ -111,6 +113,7 @@ export default function App() {
       setAccountOpen(false);
       setMasterOpen(false);
       setUsersOpen(false);
+      setDailyOpen(false);
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
@@ -356,7 +359,7 @@ export default function App() {
           onCloseAll={handleCloseAll}
         />
 
-        <TradeLog trades={trades} />
+        <TradeLog trades={trades} onOpenDaily={() => setDailyOpen(true)} />
 
         <EventLog accountId={activeAccountId} />
 
@@ -458,6 +461,8 @@ export default function App() {
         }}
         pushToast={pushToast}
       />
+
+      <DailyPnl open={dailyOpen} onClose={() => setDailyOpen(false)} accountId={activeAccountId} unrealizedPnl={state?.summary?.unrealizedPnl} />
 
       {isMaster ? (
         <>

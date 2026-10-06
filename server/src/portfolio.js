@@ -411,4 +411,83 @@ export class Portfolio {
       trades: this.trades.slice(0, 200),
     };
   }
+
+  /**
+   * 일별 실현 손익 집계 (서버 로컬 날짜 기준).
+   * 청산 시각(exitTime)으로 묶는다. 미청산 포지션은 포함하지 않는다.
+   * @param {number} days 최근 N일 (최대 365)
+   * @returns {{days: Array, total: object}} 날짜 오름차순
+   */
+  dailyStats(days = 30) {
+    // NaN/미입력 → 30일, 0 이하 → 1일, 초과 → 365일
+    const parsed = Number(days);
+    const n = Math.min(Math.max(Number.isFinite(parsed) ? parsed : 30, 1), 365);
+    const now = new Date();
+    const start = new Date(now.getFullYear(), now.getMonth(), now.getDate() - (n - 1)).getTime();
+
+    const byDay = new Map();
+    for (const t of this.trades) {
+      if (!Number.isFinite(t.exitTime) || t.exitTime < start) continue;
+      const d = new Date(t.exitTime);
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+      let row = byDay.get(key);
+      if (!row) {
+        row = { date: key, trades: 0, wins: 0, losses: 0, pnl: 0, best: null, worst: null, symbols: {} };
+        byDay.set(key, row);
+      }
+      const pnl = Number(t.pnlUSDT) || 0;
+      row.trades += 1;
+      if (pnl > 0) row.wins += 1;
+      else if (pnl < 0) row.losses += 1;
+      row.pnl += pnl;
+      if (row.best === null || pnl > row.best) row.best = pnl;
+      if (row.worst === null || pnl < row.worst) row.worst = pnl;
+      row.symbols[t.symbol] = (row.symbols[t.symbol] ?? 0) + pnl;
+    }
+
+    const rows = [...byDay.entries()]
+      .sort(([a], [b]) => (a < b ? -1 : 1))
+      .map(([, r]) => {
+        const top = Object.entries(r.symbols).sort((x, y) => y[1] - x[1])[0] ?? null;
+        return {
+          date: r.date,
+          trades: r.trades,
+          wins: r.wins,
+          losses: r.losses,
+          winRate: r.trades ? Number(((r.wins / r.trades) * 100).toFixed(1)) : 0,
+          pnl: Number(r.pnl.toFixed(4)),
+          best: r.best === null ? null : Number(r.best.toFixed(4)),
+          worst: r.worst === null ? null : Number(r.worst.toFixed(4)),
+          topSymbol: top ? top[0] : null,
+          topSymbolPnl: top ? Number(top[1].toFixed(4)) : null,
+        };
+      });
+
+    // 거래 없는 날은 제외 (0으로 채우지 않음 — 기간이 길어질 때 테이블이 비대해짐)
+    const totalPnl = rows.reduce((a, r) => a + r.pnl, 0);
+    const totalTrades = rows.reduce((a, r) => a + r.trades, 0);
+    const totalWins = rows.reduce((a, r) => a + r.wins, 0);
+    const totalLosses = rows.reduce((a, r) => a + r.losses, 0);
+    const upDays = rows.filter((r) => r.pnl > 0).length;
+    const downDays = rows.filter((r) => r.pnl < 0).length;
+
+    return {
+      days: rows,
+      total: {
+        days: rows.length,
+        trades: totalTrades,
+        wins: totalWins,
+        losses: totalLosses,
+        winRate: totalTrades ? Number(((totalWins / totalTrades) * 100).toFixed(1)) : 0,
+        pnl: Number(totalPnl.toFixed(4)),
+        upDays,
+        downDays,
+        flatDays: rows.length - upDays - downDays,
+        avgPerDay: rows.length ? Number((totalPnl / rows.length).toFixed(4)) : 0,
+        // 동점이면 최근 날짜 우선
+        bestDay: rows.length ? rows.reduce((a, b) => (b.pnl >= a.pnl ? b : a)) : null,
+        worstDay: rows.length ? rows.reduce((a, b) => (b.pnl <= a.pnl ? b : a)) : null,
+      },
+    };
+  }
 }
