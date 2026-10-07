@@ -33,9 +33,16 @@ const check = (name, actual, expected) => {
 };
 
 const DAY = 86_400_000;
-// 고정 기준일 (로컬 날짜 경계와 무관하게 결정적)
-const T0 = new Date(2026, 9, 6, 12, 0, 0).getTime(); // 10-06 12:00 로컬
-const at = (dayOffset, hour = 12) => new Date(2026, 9, 6 + dayOffset, hour, 0, 0).getTime();
+// 실제 오늘 기준 상대 날짜 (어느 날 실행해도 결정적)
+const todayStart = (() => {
+  const n = new Date();
+  return new Date(n.getFullYear(), n.getMonth(), n.getDate()).getTime();
+})();
+const dateKey = (ts) => {
+  const d = new Date(ts);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+};
+const at = (dayOffset, hour = 12) => todayStart + dayOffset * DAY + hour * 3_600_000;
 
 function trade(symbol, pnl, exitTime) {
   const entry = 100;
@@ -76,7 +83,7 @@ console.log('\n── 2. 날짜별 집계 ──');
   ];
   const r = pf.dailyStats(30);
   check('거래일 3일', r.days.length, 3);
-  check('오름차순', r.days.map((d) => d.date), ['2026-10-04', '2026-10-05', '2026-10-06']);
+  check('오름차순', r.days.map((d) => d.date), [dateKey(at(-2)), dateKey(at(-1)), dateKey(at(0))]);
 
   const today = r.days[2];
   check('오늘 2건', today.trades, 2);
@@ -96,8 +103,8 @@ console.log('\n── 2. 날짜별 집계 ──');
   check('합계 승률 40', r.total.winRate, 40);
   check('수익일 2 / 손실일 1', [r.total.upDays, r.total.downDays], [2, 1]);
   check('일평균', r.total.avgPerDay, Number((10 / 3).toFixed(4)));
-  check('최고일', r.total.bestDay.date, '2026-10-06');
-  check('최악일', r.total.worstDay.date, '2026-10-04');
+  check('최고일', r.total.bestDay.date, dateKey(at(0)));
+  check('최악일', r.total.worstDay.date, dateKey(at(-2)));
 }
 
 console.log('\n── 3. 기간 필터 ──');
@@ -107,7 +114,7 @@ console.log('\n── 3. 기간 필터 ──');
   pf.trades = [trade('AUSDT', 10, at(0)), trade('BUSD', 5, at(-10)), trade('CUSDT', 7, at(-40))];
   check('30일 → 2일', pf.dailyStats(30).days.length, 2);
   check('7일 → 1일', pf.dailyStats(7).days.length, 1);
-  check('1일 → 오늘만', pf.dailyStats(1).days.map((d) => d.date), ['2026-10-06']);
+  check('1일 → 오늘만', pf.dailyStats(1).days.map((d) => d.date), [dateKey(at(0))]);
   check('days 상한 365', pf.dailyStats(9999).total.trades, 3);
   check('days 하한 1', pf.dailyStats(0).days.length, 1);
   check('문자열 입력', pf.dailyStats('7').days.length, 1);
@@ -117,11 +124,11 @@ console.log('\n── 4. 자정 경계 ──');
 {
   const pf = new Portfolio();
   pf.init(base);
-  const justBefore = new Date(2026, 9, 5, 23, 59, 59).getTime();
-  const justAfter = new Date(2026, 9, 6, 0, 0, 1).getTime();
+  const justBefore = todayStart - 1000; // 어제 23:59:59
+  const justAfter = todayStart + 1000; // 오늘 00:00:01
   pf.trades = [trade('AUSDT', 1, justBefore), trade('BUSD', 2, justAfter)];
   const r = pf.dailyStats(30);
-  check('자정 전후 분리', r.days.map((d) => d.date), ['2026-10-05', '2026-10-06']);
+  check('자정 전후 분리', r.days.map((d) => d.date), [dateKey(justBefore), dateKey(justAfter)]);
 }
 
 console.log('\n── 5. 비정상 데이터 내성 ──');

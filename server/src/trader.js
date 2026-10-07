@@ -260,7 +260,8 @@ export class Trader extends EventEmitter {
           continue;
         }
         bought += 1;
-        const msg = `${result.live ? '실거래 매수' : '매수'} ${candidate.symbol} ${result.qty.toPrecision(6)} @ ${result.entryPrice.toPrecision(8)} (z ${candidate.z}, ${candidate.ratio}배)`;
+        const kind = result.simulated ? '시뮬레이션 매수' : result.live ? '실거래 매수' : '매수';
+        const msg = `${kind} ${candidate.symbol} ${result.qty.toPrecision(6)} @ ${result.entryPrice.toPrecision(8)} (z ${candidate.z}, ${candidate.ratio}배)`;
         this.log('buy', msg, actor);
         this.emit('toast', { level: 'buy', text: msg });
         if (this.portfolio.isLive) await this.#refreshLiveBalance();
@@ -356,7 +357,8 @@ export class Trader extends EventEmitter {
     if (result?.error) return { ok: false, error: result.error };
 
     if (this.portfolio.isLive) await this.#refreshLiveBalance();
-    const msg = `${symbol} ${result.live ? '실거래' : ''} 수동 매수 @ ${result.entryPrice.toPrecision(8)}`;
+    const kind = result.simulated ? '시뮬레이션' : result.live ? '실거래' : '';
+    const msg = `${symbol} ${kind} 수동 매수 @ ${result.entryPrice.toPrecision(8)}`;
     this.log('buy', msg, actor);
     this.emit('toast', { level: 'buy', text: msg });
     return { ok: true, position: result };
