@@ -34,6 +34,7 @@ export default function App() {
   const [selected, setSelected] = useState(null);
   const [busy, setBusy] = useState(false);
   const [scanning, setScanning] = useState(false);
+  const [restarting, setRestarting] = useState(false);
 
   const user = session?.user ?? null;
   const isMaster = user?.role === 'master';
@@ -269,6 +270,24 @@ export default function App() {
     }).finally(() => setScanning(false));
   };
 
+  const handleRestartServer = () => {
+    if (restarting) return;
+    const ok = window.confirm(
+      '서버를 재시작할까요?\n\n· 약 30~60초간 접속이 끊어집니다 (자동 재접속)\n· 실거래 모드는 자동 해제됩니다\n· 다시 로그인할 필요는 없습니다',
+    );
+    if (!ok) return;
+    setRestarting(true);
+    withBusy(async () => {
+      const res = await api.adminRestart();
+      pushToast({ level: 'info', text: res.message ?? '재시작을 시작했습니다. 잠시 후 복구됩니다.' });
+      // 소켓이 자동 재접속하므로 별도 새로고침 불필요. 버튼은 복구 후 해제
+      setTimeout(() => setRestarting(false), 90000);
+      return true;
+    }, 'error').then((r) => {
+      if (!r) setRestarting(false); // 요청 자체가 실패하면 즉시 복구
+    });
+  };
+
   if (!state) {
     return (
       <div className="app">
@@ -287,6 +306,8 @@ export default function App() {
           onLogout={handleLogout}
           onOpenMaster={() => setMasterOpen(true)}
           onOpenUsers={() => setUsersOpen(true)}
+          onRestartServer={handleRestartServer}
+          restarting={restarting}
         />
         <div className="boot">
           <div className="boot-inner">
@@ -326,6 +347,8 @@ export default function App() {
         onLogout={handleLogout}
         onOpenMaster={() => setMasterOpen(true)}
         onOpenUsers={() => setUsersOpen(true)}
+        onRestartServer={handleRestartServer}
+        restarting={restarting}
       />
 
       <main className="layout">

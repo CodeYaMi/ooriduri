@@ -103,6 +103,7 @@ export const api = {
 
   // ── 마스터 ──
   adminOverview: () => request('/api/admin/overview'),
+  adminRestart: () => request('/api/admin/restart', { method: 'POST' }),
   adminEvents: (params = {}) => {
     const q = new URLSearchParams();
     for (const [k, v] of Object.entries(params)) {

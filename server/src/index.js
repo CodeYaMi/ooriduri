@@ -10,6 +10,7 @@ import { WebSocketServer } from 'ws';
 import { normalizeSettings, SCHEMA, GROUPS, DEFAULT_SETTINGS, savePortfolioTo } from './config.js';
 import { MarketHub } from './market.js';
 import { Trader } from './trader.js';
+import { scheduleRestart } from './restart.js';
 import { ping } from './binance/rest.js';
 import { validateCredentialShape } from './binance/private.js';
 import {
@@ -433,6 +434,28 @@ app.get('/api/admin/events', requireAuth, requireMaster, (req, res) => {
   res.json({ events: readAllEvents(metas, { type: type || null, limit, before: Number(before) || 0, q: String(q ?? '') }) });
 });
 
+/**
+ * 서버 재시작 (마스터 전용).
+ * 응답을 먼저 보낸 뒤 후속 프로세스를 띄우고 자신을 종료한다.
+ * 재시작하면 실거래 모드가 자동 해제되고 WS가 일시 끊긴다 (클라이언트 자동 재접속).
+ */
+app.post('/api/admin/restart', requireAuth, requireMaster, (req, res) => {
+  res.json({ ok: true, message: '서버를 재시작합니다. 약 30~60초 후 자동으로 복구됩니다.' });
+  setTimeout(() => {
+    try {
+      scheduleRestart({
+        entryFile: path.join(__dirname, 'index.js'),
+        pidFile: PID_FILE,
+        logFile: LOG_FILE,
+        shutdownFn: () => shutdown('RESTART'),
+        logger: console,
+      });
+    } catch (err) {
+      console.error('[restart] 예약 실패:', err.message);
+    }
+  }, 800);
+});
+
 // ── 설정 (계정별) ────────────────────────────────────────────
 /** 설정 스키마 + 현재값 + 기본값 (설정 다이얼로그 구성용) */
 app.get('/api/settings', requireAuth, (req, res) => {
@@ -778,7 +801,21 @@ const liveTimer = setInterval(() => {
   for (const ws of clients.keys()) send(ws, msg);
 }, 250);
 
-server.listen(PORT, async () => {
+const PID_FILE = path.join(__dirname, '..', '..', 'server.pid');
+const LOG_FILE = path.join(__dirname, '..', '..', 'logs', 'server.log');
+
+function writePidFile() {
+  try {
+    fs.writeFileSync(PID_FILE, String(process.pid), 'utf8');
+  } catch (err) {
+    console.error('[server] PID 파일 쓰기 실패:', err.message);
+  }
+}
+
+async function boot() {
+  // 데몬/재시작 경로로 실행됐을 때만 PID 파일 갱신 (dev 모드 간섭 방지)
+  if (process.env.COIN_SURFER_WRITE_PID === '1') writePidFile();
+
   console.log(`\n  ▲ Coin Surfer 서버 (멀티 계정)`);
   console.log(`  ├─ API/WS : http://localhost:${PORT}`);
 
@@ -797,7 +834,24 @@ server.listen(PORT, async () => {
   console.log(`  ├─ 거래 계정: ${n}개`);
   console.log(`  ├─ 설정 필요: ${hasAnyUser() ? '아니오 (로그인 화면으로)' : '예 — 최초 마스터 생성 (/api/auth/setup)'}`);
   console.log(`  └─ 마켓   : Binance USDⓈ-M Futures\n`);
+}
+
+// 재시작 직후 기존 프로세스가 포트를 잡고 있으면 1초 간격으로 재시도
+server.on('error', (err) => {
+  if (err.code === 'EADDRINUSE') {
+    const left = Number(server.__retryLeft ?? 20);
+    if (left > 0) {
+      server.__retryLeft = left - 1;
+      console.log(`[server] 포트 ${PORT} 사용 중 — 1초 후 재시도 (${server.__retryLeft})`);
+      setTimeout(() => server.listen(PORT, boot), 1000);
+      return;
+    }
+  }
+  console.error('[server] 리슨 실패:', err.message);
+  process.exit(1);
 });
+
+server.listen(PORT, boot);
 
 function shutdown(signal) {
   console.log(`\n[server] ${signal} 수신, 종료합니다...`);

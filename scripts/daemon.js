@@ -68,7 +68,7 @@ function start() {
     cwd: ROOT,
     detached: true, // 새 프로세스 그룹
     stdio: ['ignore', out, out],
-    env: process.env,
+    env: { ...process.env, COIN_SURFER_WRITE_PID: '1' },
   });
   child.unref(); // 부모(셸) 종료와 무관하게 유지
 

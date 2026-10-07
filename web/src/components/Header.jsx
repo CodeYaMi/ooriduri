@@ -25,6 +25,8 @@ export function Header({
   onLogout,
   onOpenMaster,
   onOpenUsers,
+  onRestartServer,
+  restarting,
 }) {
   const activeAccount = accounts?.find((a) => a.id === activeAccountId) ?? null;
   const s = state?.summary;
@@ -113,6 +115,14 @@ export function Header({
               </button>
               <button className="btn btn-ghost" onClick={onOpenUsers} title="로그인 회원 생성 · 비밀번호 변경 · 정지 · 삭제">
                 👥 회원 관리
+              </button>
+              <button
+                className="btn btn-ghost"
+                onClick={onRestartServer}
+                disabled={busy || restarting}
+                title="서버 재시작 (실거래 모드 자동 해제, 약 30~60초간 접속 끊김)"
+              >
+                {restarting ? '재시작 중…' : '↻ 재시작'}
               </button>
             </>
           ) : null}

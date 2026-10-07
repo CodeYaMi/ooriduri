@@ -8,7 +8,7 @@
 | 최종 갱신 | 2026-09-28 |
 | 버전 | 1.0.0 |
 | 코드 규모 | 7,195줄 (server + web + scripts) |
-| 테스트 | 513개 / 전부 통과 |
+| 테스트 | 526개 / 전부 통과 |
 | 런타임 | Node 20+ (검증 환경 v22.22.2) |
 
 ---
@@ -577,6 +577,7 @@ stepSize 미배수         → 내림 후 반올림 처리
 | POST | `/api/account/credentials` | 키 저장 |
 | DELETE | `/api/account/credentials` | 키 삭제 + 연결 해제 |
 | POST | `/api/account/connect` | `{mode:'live'\|'paper', confirm, dryRun}` |
+| POST | `/api/admin/restart` | 서버 재시작 (마스터, 응답 후 후속 실행) |
 | POST | `/api/account/dry-run` | `{enabled}` 주문 시뮬레이션 토글 (연결 유지) |
 | POST | `/api/account/disconnect` | 가상 모드로 복귀 + 무장 해제 |
 | POST | `/api/account/balance` | 잔고 갱신 |
@@ -717,7 +718,7 @@ SIGKILL. 종료 핸들러 메시지도 없었으므로 SIGTERM 이 아님을 확
 npm test
 ```
 
-### 9.2 구성 (513개)
+### 9.2 구성 (526개)
 
 | 스크립트 | 개수 | 대상 |
 |---|---|---|
@@ -730,6 +731,7 @@ npm test
 | `test-24h-filter.js` | 26 | 24h 진입 차단 + **[핵심] 청산 영향 없음** |
 | `test-live.js` | 63 |
 | `test-daily.js` | 30 | 일별 집계 (경계·기간·내성) |
+| `test-restart.js` | 10 | 재시작 헬퍼 (주입식 spawn/exit 검증) |
 | `test-sellfix.js` | 20 | 포지션 모드 감지·자가 복구·청산 백오프 | 실거래 주문·동기화·잔고·오류 전파·**주문 시뮬레이션**·확인 게이트 |
 | `test-auth.js` | 33 | 해시·마스터 보호·세션·만료·정지·시도 제한 |
 | `test-multitenant.js` | 53 | 설정/포트폴리오/이벤트 격리·가시성·마이그레이션·삭제 가드 |
