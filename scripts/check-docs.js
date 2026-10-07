@@ -124,7 +124,7 @@ has('live 250ms', read('server/src/index.js'), '250');
 
 console.log('\n── 테스트 개수 일치 ──');
 const testFiles = fs.readdirSync(path.join(ROOT, 'scripts')).filter((f) => f.startsWith('test-'));
-check('테스트 스크립트 수', testFiles.length, 10);
+check('테스트 스크립트 수', testFiles.length, 11);
 has('check-syntax 가 test 에 포함', read('package.json'), 'check-syntax.js');
 has('test-24h-filter 가 test 에 포함', read('package.json'), 'test-24h-filter.js');
 has('test-live 가 test 에 포함', read('package.json'), 'test-live.js');

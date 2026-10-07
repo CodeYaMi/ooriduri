@@ -33,6 +33,8 @@ export class Trader extends EventEmitter {
     this.nearMiss = [];
     this.entryRejects = { by24h: 0, byRsi: 0 };
     this.cooldowns = new Map();
+    /** 청산 실패 백오프: symbol → { count, nextRetryAt, lastError } */
+    this.closeFail = new Map();
     this.tracked = new Set();
 
     this.status = {
@@ -285,9 +287,15 @@ export class Trader extends EventEmitter {
     }
     if (this.trading) return [];
 
-    const exits = this.portfolio.update(map, Date.now());
-    if (exits.length) this.#closePositions(exits);
-    return exits;
+    const now = Date.now();
+    const exits = this.portfolio.update(map, now);
+    // 청산 실패 백오프 중인 종목은 건너뛴다 (가격 반영·손익 표시는 계속됨)
+    const ready = exits.filter((e) => {
+      const rec = this.closeFail.get(e.symbol);
+      return !rec || rec.nextRetryAt <= now;
+    });
+    if (ready.length) this.#closePositions(ready);
+    return ready;
   }
 
   /** 청산 실행 (비동기 — 실거래는 실제 주문이므로 await) */
@@ -310,11 +318,20 @@ export class Trader extends EventEmitter {
     try {
       closed = await this.portfolio.sell(symbol, price, reason);
     } catch (err) {
-      this.log('error', `${symbol} 매도 실패: ${err.message}`, actor);
-      this.emit('toast', { level: 'warn', text: `${symbol} 매도 실패: ${err.message}` });
+      // 같은 실패를 매초 반복하지 않는다 — 지수 백오프 (30초 → 5분 상한)
+      const rec = this.closeFail.get(symbol) ?? { count: 0 };
+      rec.count += 1;
+      rec.lastError = err.message;
+      const delayMs = Math.min(30_000 * 2 ** (rec.count - 1), 300_000);
+      rec.nextRetryAt = Date.now() + delayMs;
+      this.closeFail.set(symbol, rec);
+      const friendly = err.friendly ?? err.message;
+      this.log('error', `${symbol} 매도 실패 (${rec.count}회 연속): ${friendly} — ${Math.round(delayMs / 1000)}초 후 재시도`, actor);
+      this.emit('toast', { level: 'warn', text: `${symbol} 매도 실패: ${friendly}` });
       return null;
     }
     if (!closed) return null;
+    this.closeFail.delete(symbol);
 
     if (this.settings.cooldownMinutes > 0) {
       this.cooldowns.set(symbol, Date.now() + this.settings.cooldownMinutes * MINUTE);
@@ -458,7 +475,7 @@ export class Trader extends EventEmitter {
     return this.accountInfo();
   }
 
-  /** 거래소 잔고 갱신 */
+  /** 거래소 잔고 갱신 (+ 포지션 모드 자가 복구) */
   async #refreshLiveBalance() {
     if (!this.portfolio.isLive) return null;
     try {
@@ -470,6 +487,16 @@ export class Trader extends EventEmitter {
       this.portfolio.equity = this.portfolio.computeEquity();
       this.portfolio.equityPeak = Math.max(this.portfolio.equityPeak, this.portfolio.equity);
       this.status.account.balance = balance;
+      // 포지션 모드가 바뀌었으면(사용자가 바이낸스에서 변경) 자동 반영
+      try {
+        const mode = await this.broker.refreshPositionMode();
+        if (mode.changed) {
+          this.log('account', `포지션 모드 변경 감지: ${mode.from} → ${mode.to} (자동 반영)`, null);
+          this.emit('toast', { level: 'info', text: `포지션 모드가 ${mode.to} 로 바뀌어 자동 반영했습니다.` });
+        }
+      } catch {
+        /* 모드 조회 실패는 잔고 갱신을 막지 않는다 */
+      }
       return balance;
     } catch (err) {
       this.status.account.balanceError = err.message;

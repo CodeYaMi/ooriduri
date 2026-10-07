@@ -42,6 +42,7 @@ export class BinancePrivateError extends Error {
       '-4131': '이 지갑은 후손 계정 간 이체 전용입니다. 거래 권한이 있는 키를 사용하세요.',
       '-1102': '선택한 포지션이 없습니다. 포지션 모드(one-way/hedge)가 올바른지 확인하세요.',
       '-4047': 'reduceOnly 주문인데 청산할 포지션이 없습니다.',
+      '-4061': '주문의 포지션 방향이 계정 설정과 맞지 않습니다. 계정이 one-way인데 LONG을 보냈거나 그 반대입니다. 포지션 모드 감지를 확인하세요.',
     };
     return map[this.code] ?? this.message;
   }
@@ -145,6 +146,17 @@ export class PrivateClient {
 
   // ── 연결 확인 / 계정 ─────────────────────────────────────────
 
+  /**
+   * 실제 포지션 모드 조회 (읽기 전용).
+   * 주의: GET /fapi/v2/account 응답에는 positionSide 필드가 없다.
+   * 이전 코드는 존재하지 않는 필드를 읽어 항상 hedge 로 오판했고,
+   * one-way 계정의 매도 주문에 positionSide=LONG 을 붙여 -4061 을 냈다.
+   */
+  async fetchPositionMode() {
+    const dual = await this.signedRequest('GET', '/fapi/v1/positionSide/dual');
+    return dual.dualSidePosition ? 'hedge' : 'one-way';
+  }
+
   /** API 키 유효성 + 지갑 권한 확인 */
   async verify() {
     const account = await this.signedRequest('GET', '/fapi/v2/account');
@@ -153,7 +165,7 @@ export class PrivateClient {
       canDeposit: Boolean(account.canDeposit),
       totalWalletBalance: Number(account.totalWalletBalance ?? 0),
       availableBalance: Number(account.availableBalance ?? 0),
-      positionMode: account.positionSide === 'BOTH' ? 'one-way' : 'hedge',
+      positionMode: await this.fetchPositionMode(),
       serverTime: account.updateTime ?? null,
     };
   }
@@ -167,7 +179,7 @@ export class PrivateClient {
       availableBalance: Number(usdt?.availableBalance ?? 0),
       unrealizedProfit: Number(usdt?.unrealizedProfit ?? 0),
       marginBalance: Number(usdt?.marginBalance ?? 0),
-      positionMode: account.positionSide === 'BOTH' ? 'one-way' : 'hedge',
+      positionMode: await this.fetchPositionMode(),
     };
   }
 

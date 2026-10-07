@@ -95,6 +95,23 @@ export class LiveBroker {
     return this.dryRun;
   }
 
+  /**
+   * 포지션 모드 재확인 — 재연결 없이 갱신한다.
+   * 사용자가 바이낸스에서 모드를 바꾸면 다음 잔고 갱신 때 자동 반영된다.
+   * @returns 변경됐으면 { changed:true, from, to }
+   */
+  async refreshPositionMode() {
+    const client = this.#require();
+    const mode = await client.fetchPositionMode();
+    if (mode !== this.positionMode) {
+      const from = this.positionMode;
+      this.positionMode = mode;
+      console.log(`[broker] 포지션 모드 변경 감지: ${from} → ${mode}`);
+      return { changed: true, from, to: mode };
+    }
+    return { changed: false, mode };
+  }
+
   #require() {
     if (!this.isLive) throw new BinancePrivateError('계정이 연결되어 있지 않습니다. API 키를 먼저 입력하세요.');
     return this.client;
