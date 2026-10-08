@@ -346,7 +346,7 @@ export class Trader extends EventEmitter {
         manual: '수동 매도',
       }[reason] ?? reason;
 
-    const msg = `${symbol} ${label} 매도 @ ${closed.exitPrice.toPrecision(8)} · ${closed.pnlPct >= 0 ? '+' : ''}${(closed.pnlPct * 100).toFixed(2)}% (${closed.pnlUSDT >= 0 ? '+' : ''}${closed.pnlUSDT.toFixed(2)} USDT)`;
+    const msg = `${symbol} ${label} 매도 @ ${closed.exitPrice.toPrecision(8)} · ${closed.pnlPct >= 0 ? '+' : ''}${(closed.pnlPct * 100).toFixed(2)}% (${closed.pnlUSDT >= 0 ? '+' : ''}${closed.pnlUSDT.toFixed(2)} USDT)${closed.partial ? ' (부분 체결 — 잔량 유지)' : ''}`;
     this.log(reason === 'manual' ? 'sell' : 'sell', msg, actor);
     this.emit('toast', { level: closed.pnlUSDT >= 0 ? 'profit' : 'loss', text: msg });
 

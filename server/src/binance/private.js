@@ -218,6 +218,9 @@ export class PrivateClient {
     const qty = this.roundQuantity(symbol, quantity);
     if (!(qty > 0)) throw new BinancePrivateError(`수량이 0이 되어 주문을 취소했습니다 (${symbol}).`, { code: -1013 });
 
+    // FULL 응답을 쓴다. RESULT 는 MARKET 주문의 avgPrice 를 "0"으로
+    // 돌려주는 경우가 있어 체결가 파싱에 실패한다 ("체결 정보 확인 불가").
+    // fills[] 로 VWAP 을 직접 계산하는 게 가장 확실하다.
     const order = await this.signedRequest('POST', '/fapi/v1/order', {
       symbol,
       side,
@@ -226,33 +229,111 @@ export class PrivateClient {
       // Hedge 모드에서는 reduceOnly 와 positionSide 를 함께 쓸 수 없다
       reduceOnly: positionSide ? undefined : reduceOnly ? 'true' : 'false',
       positionSide: positionSide ?? undefined,
-      newOrderRespType: 'RESULT',
+      newOrderRespType: 'FULL',
     });
 
     if (order.status === 'REJECTED' || order.status === 'EXPIRED') {
-      throw new BinancePrivateError(`주문이 거절되었습니다: ${order.avgPrice || order.status}`, { code: -2010 });
+      throw new BinancePrivateError(`주문이 거절되었습니다: ${order.status}`, { code: -2010 });
     }
-    if (order.status === 'FILLED' || order.status === 'PARTIALLY_FILLED') {
-      const avg = Number(order.avgPrice);
-      const executed = Number(order.executedQty);
-      if (!(avg > 0) || !(executed > 0)) {
-        throw new BinancePrivateError('체결 정보를 확인할 수 없습니다. 포지션을 동기화하세요.', { code: -2010 });
+    if (order.status !== 'FILLED' && order.status !== 'PARTIALLY_FILLED') {
+      throw new BinancePrivateError(`주문 상태가 예상과 다릅니다: ${order.status}`, { code: -2010 });
+    }
+
+    const fill = await this.#resolveFill(symbol, order, qty);
+    const { fee, feeAsset } = this.#resolveFee(order);
+    return {
+      orderId: order.orderId,
+      symbol: order.symbol,
+      side: order.side,
+      avgPrice: fill.avg,
+      qty: fill.executed,
+      requestedQty: qty,
+      isPartial: fill.executed < qty * (1 - 1e-9),
+      cost: fill.avg * fill.executed,
+      reduceOnly: order.reduceOnly === true,
+      status: order.status,
+      fee,
+      feeAsset,
+      time: order.updateTime,
+    };
+  }
+
+  /**
+   * 체결가 확정. 우선순위:
+   *  1) fills[] VWAP (가장 확실)
+   *  2) avgPrice/executedQty 필드
+   *  3) 주문 재조회 (응답 누락 시)
+   * 전부 실패 = 실제로 체결된 게 없으므로 동기화 안내와 함께 throw.
+   */
+  async #resolveFill(symbol, order, requestedQty) {
+    // 1) fills VWAP
+    const fills = Array.isArray(order.fills) ? order.fills : [];
+    let fq = 0;
+    let fsum = 0;
+    for (const f of fills) {
+      const p = Number(f.price);
+      const q = Number(f.qty);
+      if (p > 0 && q > 0) {
+        fq += q;
+        fsum += p * q;
       }
-      return {
-        orderId: order.orderId,
-        symbol: order.symbol,
-        side: order.side,
-        avgPrice: avg,
-        qty: executed,
-        cost: avg * executed,
-        reduceOnly: order.reduceOnly === true,
-        status: order.status,
-        fee: Number(order.commission ?? 0),
-        feeAsset: order.commissionAsset,
-        time: order.updateTime,
-      };
     }
-    throw new BinancePrivateError(`주문 상태가 예상과 다릅니다: ${order.status}`, { code: -2010 });
+    if (fq > 0) return { avg: roundPx(fsum / fq), executed: fq };
+
+    // 2) 필드 직접 읽기
+    const avg = Number(order.avgPrice);
+    const executed = Number(order.executedQty);
+    if (avg > 0 && executed > 0) return { avg, executed };
+
+    // 3) 재조회 (일시적 누락 대비 1회)
+    try {
+      const fresh = await this.signedRequest('GET', '/fapi/v1/order', { symbol, orderId: order.orderId });
+      const fills2 = Array.isArray(fresh.fills) ? fresh.fills : [];
+      let q2 = 0;
+      let s2 = 0;
+      for (const f of fills2) {
+        const p = Number(f.price);
+        const q = Number(f.qty);
+        if (p > 0 && q > 0) {
+          q2 += q;
+          s2 += p * q;
+        }
+      }
+      if (q2 > 0) return { avg: s2 / q2, executed: q2 };
+      const avg2 = Number(fresh.avgPrice);
+      const ex2 = Number(fresh.executedQty);
+      if (avg2 > 0 && ex2 > 0) return { avg: avg2, executed: ex2 };
+    } catch {
+      /* 재조회 실패는 아래 에러로 통합 */
+    }
+
+    throw new BinancePrivateError(
+      `주문 #${order.orderId} (${order.status}) 응답에 체결 정보가 없습니다. 주문은 거래소에 들어갔을 수 있으니 포지션을 동기화하세요.`,
+      { code: -2010 },
+    );
+  }
+
+  #sumFee(fills) {
+    if (!Array.isArray(fills)) return 0;
+    return fills.reduce((a, f) => a + (Number(f.commission) || 0), 0);
+  }
+
+  /**
+   * 수수료 집계. fills 의 자산이 섞일 수 있으므로 USDT 합계를 우선하고,
+   * 없으면 첫 번째 자산 합계를 쓴다 (broker 가 USDT 외는 무시한다).
+   */
+  #resolveFee(order) {
+    if (order.commission !== undefined) {
+      return { fee: Number(order.commission) || 0, feeAsset: order.commissionAsset };
+    }
+    const byAsset = new Map();
+    for (const f of Array.isArray(order.fills) ? order.fills : []) {
+      const asset = f.commissionAsset || 'UNKNOWN';
+      byAsset.set(asset, (byAsset.get(asset) ?? 0) + (Number(f.commission) || 0));
+    }
+    if (byAsset.has('USDT')) return { fee: byAsset.get('USDT'), feeAsset: 'USDT' };
+    const first = [...byAsset.entries()][0];
+    return first ? { fee: first[1], feeAsset: first[0] } : { fee: 0, feeAsset: undefined };
   }
 
   /** 해당 종목의 미체결 주문 ( Hedge 모드에서 reduceOnly 불가 판정에 사용) */
@@ -307,6 +388,11 @@ export class PrivateClient {
     if (price * quantity < f.minNotional) errors.push(`주문금액 ${(price * quantity).toFixed(2)} USDT 가 최소 ${f.minNotional} 미만`);
     return { ok: errors.length === 0, errors, minNotional: f.minNotional, stepSize: f.stepSize };
   }
+}
+
+/** 체결가 정리 (VWAP 부동소수점 노이즈 제거) */
+function roundPx(n) {
+  return Number(Number(n).toFixed(8));
 }
 
 function parseFilters(symbol) {

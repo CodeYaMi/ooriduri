@@ -16,6 +16,21 @@ if (!DATA_DIR) {
   process.exit(2);
 }
 
+const baseSettings = {
+  takeProfitPct: 10,
+  stopLossPct: 5,
+  trailingStopPct: 0,
+  maxHoldMinutes: 0,
+  initialCapitalUSDT: 10_000,
+  positionSizeUSDT: 100,
+  maxPositions: 10,
+  topN: 10,
+  cooldownMinutes: 0,
+  takerFeeBps: 0,
+  slippageBps: 0,
+  autoTrade: 0,
+};
+
 let pass = 0;
 let fail = 0;
 const check = (name, actual, expected) => {
@@ -151,6 +166,106 @@ console.log('\n── 4. 청산 실패 백오프 ──');
   check('성공 후 백오프 해제', t.closeFail.has('TESTUSDT'), false);
   check('포지션 정리됨', t.portfolio.positions.has('TESTUSDT'), false);
   t.stop();
+}
+
+console.log('\n── 5. 체결 응답 파싱 (FULL 우선) ──');
+{
+  // fills VWAP 우선
+  const c = stubClient({
+    '/fapi/v1/order': {
+      status: 'FILLED', orderId: 1, symbol: 'X', side: 'BUY', avgPrice: '0.00000000', executedQty: '1',
+      fills: [
+        { price: '100', qty: '0.6', commission: '0.03', commissionAsset: 'USDT' },
+        { price: '102', qty: '0.4', commission: '0.02', commissionAsset: 'USDT' },
+      ],
+    },
+  });
+  const fill = await c.marketBuy('X', 1, {});
+  check('fills VWAP 체결가', fill.avgPrice, 100.8);
+  check('체결 수량', fill.qty, 1);
+  check('전량 체결은 partial 아님', fill.isPartial, false);
+  check('수수료 USDT 합산', [fill.fee, fill.feeAsset], [0.05, 'USDT']);
+}
+{
+  // avgPrice 필드 폴백 (fills 없음)
+  const c = stubClient({
+    '/fapi/v1/order': { status: 'FILLED', orderId: 2, symbol: 'X', side: 'BUY', avgPrice: '99.5', executedQty: '2', fills: [] },
+  });
+  const fill = await c.marketBuy('X', 2, {});
+  check('avgPrice 필드 폴백', fill.avgPrice, 99.5);
+}
+{
+  // 응답 누락 → GET 재조회로 복구
+  let orderCalls = 0;
+  const c = stubClient({});
+  c.signedRequest = async (method, pathname) => {
+    if (pathname === '/fapi/v1/order' && method === 'POST') {
+      orderCalls += 1;
+      return { status: 'FILLED', orderId: 3, symbol: 'X', side: 'BUY', avgPrice: '0', executedQty: '0', fills: [] };
+    }
+    return {
+      status: 'FILLED', orderId: 3, symbol: 'X', side: 'BUY', avgPrice: '101.25', executedQty: '1.5',
+      fills: [{ price: '101.25', qty: '1.5', commission: '0.05', commissionAsset: 'USDT' }],
+    };
+  };
+  const fill = await c.marketBuy('X', 1.5, {});
+  check('재조회로 체결가 복구', fill.avgPrice, 101.25);
+  check('POST 1회 + GET 1회', orderCalls, 1);
+}
+{
+  // 전부 실패 → 동기화 안내와 함께 throw
+  const c = stubClient({
+    '/fapi/v1/order': { status: 'FILLED', orderId: 4, symbol: 'X', side: 'BUY', avgPrice: '0', executedQty: '0', fills: [] },
+  });
+  // GET 재조회도 빈 응답
+  const orig = c.signedRequest;
+  c.signedRequest = async (method, pathname, params) => {
+    if (method === 'GET') return { status: 'FILLED', orderId: 4, avgPrice: '0', executedQty: '0', fills: [] };
+    return orig(method, pathname, params);
+  };
+  let msg = '';
+  try {
+    await c.marketBuy('X', 1, {});
+  } catch (err) {
+    msg = err.message;
+  }
+  check('동기화 안내 포함', msg.includes('동기화'), true);
+  check('주문번호 포함', msg.includes('#4'), true);
+}
+{
+  // 부분 체결 플래그
+  const c = stubClient({
+    '/fapi/v1/order': {
+      status: 'PARTIALLY_FILLED', orderId: 5, symbol: 'X', side: 'SELL', avgPrice: '0', executedQty: '0.7',
+      fills: [{ price: '50', qty: '0.7', commission: '0.01', commissionAsset: 'BNB' }],
+    },
+  });
+  const fill = await c.marketSell('X', 1, {});
+  check('부분 체결 감지', fill.isPartial, true);
+  check('요청 수량 기록', fill.requestedQty, 1);
+  check('체결 수량', fill.qty, 0.7);
+  check('수수료 자산 유지', fill.feeAsset, 'BNB');
+}
+
+console.log('\n── 6. 부분 체결 잔량 유지 ──');
+{
+  const { Portfolio } = await import('../server/src/portfolio.js');
+  const pf = new Portfolio();
+  pf.init({ ...baseSettings, takerFeeBps: 0, slippageBps: 0 });
+  const exec = {
+    isLive: true,
+    dryRun: false,
+    buy: async () => ({ qty: 10, avgPrice: 100, cost: 1000 }),
+    sell: async () => ({ avgPrice: 110, qty: 6, requestedQty: 10, isPartial: true }),
+    toLocalPosition: (ex) => ({ symbol: ex.symbol, qty: ex.positionAmt, entryPrice: ex.entryPrice, markPrice: ex.markPrice, pnlPct: 0, pnlUSDT: 0, highPrice: ex.entryPrice, lowPrice: ex.entryPrice, entryTime: Date.now(), holdMinutes: 0, signal: {} }),
+  };
+  pf.attachExecutor(exec);
+  await pf.buy('X', 1000, 100);
+  const closed = await pf.sell('X', 110, 'take-profit');
+  check('체결분만 실현', closed.pnlUSDT, 60);
+  check('부분 표시', closed.partial, true);
+  check('잔량 4 유지', pf.positions.get('X')?.qty, 4);
+  check('포지션 삭제 안 됨', pf.positions.has('X'), true);
 }
 
 console.log(`\n${'═'.repeat(46)}\n통과 ${pass} / 실패 ${fail}\n`);

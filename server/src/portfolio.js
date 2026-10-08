@@ -206,6 +206,8 @@ export class Portfolio {
         live: true,
         // 주문 시뮬레이션 모드에서 체결된 경우 표시
         simulated: Boolean(fill.simulated),
+        // 부분 체결이면 잔량이 남는다
+        partial: Boolean(fill.isPartial),
         orderId: fill.orderId,
         exitPrice: price,
         rawExitPrice: rawBid,
@@ -216,7 +218,14 @@ export class Portfolio {
         exitFee: 0, // 거래소가 실제 수수료를 차감하므로 추정하지 않음
         holdMinutes: (Date.now() - position.entryTime) / 60_000,
       };
-      this.positions.delete(symbol);
+      const remainder = position.qty - fill.qty;
+      if (fill.isPartial && remainder > 0) {
+        // 부분 체결 — 잔량 유지, 다음 틱에 청산 조건이 다시 평가된다
+        position.qty = remainder;
+        position.markPrice = price;
+      } else {
+        this.positions.delete(symbol);
+      }
       this.trades.unshift(closed);
       if (this.trades.length > 500) this.trades.length = 500;
       this.realizedPnl += gross;
