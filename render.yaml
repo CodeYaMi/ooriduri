@@ -1,0 +1,28 @@
+# Render Blueprint — Coin Surfer 원클릭 배포용
+# dashboard.render.com → New → Blueprint → 이 저장소 선택
+#
+# 주의:
+# - plan: starter (유료, 상시 가동). 자동매매는 서버가 항상 켜져 있어야 해서
+#   슬립되는 free 플랜은 부적합합니다. free로 시험만 하려면 plan을 free로
+#   바꾸고 아래 disk 블록을 삭제하세요 (단, 설정·키·기록이 재배포마다 초기화됨).
+# - region: singapore — 바이낸스가 미국 IP를 차단하므로 미국 리전 금지.
+
+services:
+  - type: web
+    name: coin-surfer
+    runtime: node
+    plan: starter
+    region: singapore
+    buildCommand: npm install && npm run build
+    startCommand: npm run serve
+    healthCheckPath: /api/health
+    autoDeploy: true
+    envVars:
+      - key: NODE_VERSION
+        value: 22
+      - key: COIN_SURFER_DATA_DIR
+        value: /var/data/coin-surfer
+    disk:
+      name: coin-surfer-data
+      mountPath: /var/data
+      sizeGB: 1
