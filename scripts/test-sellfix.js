@@ -268,5 +268,122 @@ console.log('\n── 6. 부분 체결 잔량 유지 ──');
   check('포지션 삭제 안 됨', pf.positions.has('X'), true);
 }
 
+console.log('\n── 7. NEW 상태 폴링 ──');
+{
+  // NEW → 폴링 후 FILLED
+  const c = stubClient({});
+  let gets = 0;
+  c.signedRequest = async (method, pathname) => {
+    if (method === 'POST') return { status: 'NEW', orderId: 10, symbol: 'X', side: 'BUY' };
+    gets += 1;
+    if (gets < 3) return { status: 'NEW', orderId: 10, symbol: 'X', side: 'BUY' };
+    return {
+      status: 'FILLED', orderId: 10, symbol: 'X', side: 'BUY', avgPrice: '0', executedQty: '2',
+      fills: [{ price: '200', qty: '2', commission: '0.1', commissionAsset: 'USDT' }],
+    };
+  };
+  const fill = await c.marketBuy('X', 2, {});
+  check('NEW 후 체결가 확정', fill.avgPrice, 200);
+  check('GET 폴링 발생', gets >= 3, true);
+}
+{
+  // NEW 지속 → 타임아웃 후 동기화 안내 (10초 대기)
+  const c = stubClient({});
+  c.signedRequest = async (method) => {
+    if (method === 'POST') return { status: 'NEW', orderId: 11, symbol: 'X', side: 'BUY' };
+    return { status: 'NEW', orderId: 11, symbol: 'X', side: 'BUY' };
+  };
+  const t0 = Date.now();
+  let msg = '';
+  try {
+    await c.marketBuy('X', 1, {});
+  } catch (err) {
+    msg = err.message;
+  }
+  check('타임아웃 시 throw', msg.includes('예상과 다릅니다: NEW'), true);
+  check('약 10초 대기', Date.now() - t0 >= 9000, true);
+}
+
+console.log('\n── 8. -4047 복구 (거래소 수량 기준 재시도) ──');
+{
+  const { LiveBroker } = await import('../server/src/broker.js');
+  const mkBroker = (marketSellImpl, exchangeAmt) => {
+    const b = new LiveBroker();
+    b.connected = true;
+    b.positionMode = 'one-way';
+    const sent = [];
+    b.client = {
+      roundQuantity: (s, q) => Math.floor(q / 0.001) * 0.001,
+      filterFor: () => ({ stepSize: 0.001, minQty: 0.001, minNotional: 5, tickSize: 0.01 }),
+      marketSell: async (symbol, qty, opts) => {
+        sent.push({ symbol, qty, opts });
+        return marketSellImpl(symbol, qty, opts);
+      },
+    };
+    b.exchangePositions = async () =>
+      exchangeAmt > 0 ? [{ symbol: 'X', positionAmt: exchangeAmt }] : [];
+    return { b, sent };
+  };
+  const err4047 = new BinancePrivateError('ReduceOnly Order is rejected.', { code: -4047 });
+
+  // (a) 로컬 10 vs 거래소 6 → 6으로 재시도 1회 후 성공
+  {
+    let n = 0;
+    const { b, sent } = mkBroker(async () => {
+      n += 1;
+      if (n === 1) throw err4047;
+      return { avgPrice: 50, qty: 6, orderId: 21 };
+    }, 6);
+    const fill = await b.sell('X', 10, {});
+    check('재시도 성공', fill.qty, 6);
+    check('첫 시도는 로컬 수량', sent[0].qty, 10);
+    check('재시도는 거래소 수량', sent[1].qty, 6);
+    check('총 2회 호출', sent.length, 2);
+  }
+  // (b) 거래소에 없음 → 확정 안내
+  {
+    const { b } = mkBroker(async () => {
+      throw err4047;
+    }, 0);
+    let msg = '';
+    try {
+      await b.sell('X', 10, {});
+    } catch (err) {
+      msg = err.message;
+    }
+    check('이미 청산됨 안내', msg.includes('이미 없습니다'), true);
+  }
+  // (c) 다른 에러는 재시도 안 함
+  {
+    let n = 0;
+    const { b } = mkBroker(async () => {
+      n += 1;
+      throw new BinancePrivateError('boom', { code: -1003 });
+    }, 6);
+    try {
+      await b.sell('X', 10, {});
+    } catch { /* noop */ }
+    check('-4047 외에는 1회만', n, 1);
+  }
+  // (d) 보유 초과 금지: dust 분기 삭제 확인
+  {
+    const { b, sent } = mkBroker(async (s, q) => ({ avgPrice: 50, qty: q, orderId: 22 }), 100);
+    await b.sell('X', 5.0009, {});
+    check('보유 초과 주문 없음', sent[0].qty <= 5.0009, true);
+  }
+  // (e) 최소 수량 미달은 사전 안내
+  {
+    const { b } = mkBroker(async () => ({ avgPrice: 1, qty: 1, orderId: 23 }), 100);
+    b.client.filterFor = () => ({ stepSize: 0.001, minQty: 100, minNotional: 5, tickSize: 0.01 });
+    let msg = '';
+    try {
+      await b.sell('X', 5, {});
+    } catch (err) {
+      msg = err.message;
+    }
+    check('dust 사전 안내', msg.includes('최소 주문수량'), true);
+  }
+}
+
 console.log(`\n${'═'.repeat(46)}\n통과 ${pass} / 실패 ${fail}\n`);
 process.exit(fail === 0 ? 0 : 1);

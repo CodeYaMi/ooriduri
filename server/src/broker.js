@@ -168,12 +168,19 @@ export class LiveBroker {
    */
   async sell(symbol, qty, { closing = true, refPrice = 0 } = {}) {
     const client = this.#require();
-    const rounded = client.roundQuantity(symbol, qty);
-
-    // 수량이 최소 단위에 못 미쳐 dust 가 남는 경우 → 전량 청산 시도
-    const f = client.filterFor(symbol);
-    const useQty = rounded < f.minQty ? client.roundQuantity(symbol, qty + f.stepSize) : rounded;
+    // 내림 후 보유 수량을 초과하지 않도록 고정 — 초과분은 reduceOnly 거부(-4047) 사유다
+    const floored = client.roundQuantity(symbol, qty);
+    const useQty = Math.min(floored, qty);
     if (!(useQty > 0)) throw new BinancePrivateError(`청산 수량이 0입니다 (${symbol}). 지워진 수량을 정리하세요.`, { code: -1013 });
+
+    // 최소 수량 미달 잔량은 API 단일 주문으로 청산 불가 — 거부되기 전에 안내
+    const f = client.filterFor(symbol);
+    if (useQty < f.minQty) {
+      throw new BinancePrivateError(
+        `${symbol} 잔량(${qty})이 최소 주문수량(${f.minQty}) 미만이라 API로 청산할 수 없습니다. 거래소 앱에서 직접 정리한 뒤 동기화하세요.`,
+        { code: -4164 },
+      );
+    }
 
     // 주문 시뮬레이션
     if (this.dryRun) {
@@ -197,12 +204,32 @@ export class LiveBroker {
     }
 
     const hedge = this.positionMode === 'hedge';
-    const fill = await client.marketSell(symbol, useQty, {
+    const sellOpts = {
       reduceOnly: closing && !hedge,
       positionSide: hedge ? 'LONG' : null,
-    });
-    this.#recordFee(fill);
-    return fill;
+    };
+    try {
+      const fill = await client.marketSell(symbol, useQty, sellOpts);
+      this.#recordFee(fill);
+      return fill;
+    } catch (err) {
+      // -4047 (reduceOnly 거부): 로컬 수량과 거래소 실제 수량이 어긋난 경우.
+      // 거래소 기준으로 1회만 재시도하고, 포지션이 없으면 확정 안내한다.
+      if (err.code !== -4047 || !closing) throw err;
+      const positions = await this.exchangePositions();
+      const actual = positions.find((p) => p.symbol === symbol)?.positionAmt ?? 0;
+      if (!(actual > 0)) {
+        throw new BinancePrivateError(
+          `${symbol} 포지션이 거래소에 이미 없습니다 (다른 곳에서 청산됨). 다음 동기화에서 정리됩니다.`,
+          { code: -4047 },
+        );
+      }
+      const retryQty = Math.min(client.roundQuantity(symbol, actual), actual);
+      if (!(retryQty > 0)) throw err;
+      const fill = await client.marketSell(symbol, retryQty, sellOpts);
+      this.#recordFee(fill);
+      return fill;
+    }
   }
 
   get slippageRate() {

@@ -30,7 +30,7 @@ npm run up        # 빌드 + 백그라운드 실행 → http://localhost:8787
 | `npm run logs` | 로그 실시간 보기 (`tail -f`) |
 | `npm start` | 빌드 + **포그라운드** 실행 (Ctrl+C 로 종료) |
 | `npm run dev` | 개발 모드 — 백엔드 `:8787` + 프론트 `:5173`, 코드 수정 시 자동 반영 |
-| `npm test` | 테스트 543개 실행 |
+| `npm test` | 테스트 555개 실행 |
 
 > **왜 `npm run up` 을 쓰나요?** — `node src/index.js &` 처럼 일반 백그라운드로 띄우면
 > 띄운 터미널 세션이 정리될 때 프로세스도 함께 종료됩니다.

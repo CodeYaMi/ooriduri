@@ -221,7 +221,7 @@ export class PrivateClient {
     // FULL 응답을 쓴다. RESULT 는 MARKET 주문의 avgPrice 를 "0"으로
     // 돌려주는 경우가 있어 체결가 파싱에 실패한다 ("체결 정보 확인 불가").
     // fills[] 로 VWAP 을 직접 계산하는 게 가장 확실하다.
-    const order = await this.signedRequest('POST', '/fapi/v1/order', {
+    let order = await this.signedRequest('POST', '/fapi/v1/order', {
       symbol,
       side,
       type: 'MARKET',
@@ -232,7 +232,14 @@ export class PrivateClient {
       newOrderRespType: 'FULL',
     });
 
-    if (order.status === 'REJECTED' || order.status === 'EXPIRED') {
+    // MARKET 주문도 유동성이 얇으면 NEW 로 머물 수 있다 (즉시 체결 보장 없음).
+    // 체결될 때까지 최대 10초 대기하고, 그 이상은 미체결로 보고 throw.
+    // (늦게 체결되면 포지션 동기화가 편입하므로 자금 유실은 없다)
+    if (order.status === 'NEW') {
+      order = await this.#waitForFill(symbol, order.orderId);
+    }
+
+    if (order.status === 'REJECTED' || order.status === 'EXPIRED' || order.status === 'CANCELED') {
       throw new BinancePrivateError(`주문이 거절되었습니다: ${order.status}`, { code: -2010 });
     }
     if (order.status !== 'FILLED' && order.status !== 'PARTIALLY_FILLED') {
@@ -256,6 +263,26 @@ export class PrivateClient {
       feeAsset,
       time: order.updateTime,
     };
+  }
+
+  /**
+   * NEW 상태 주문이 체결될 때까지 폴링 (최대 약 10초).
+   * @returns 최종 주문 객체 (FILLED/PARTIALLY_FILLED 또는 마지막 상태)
+   */
+  async #waitForFill(symbol, orderId, { intervalMs = 500, maxWaitMs = 10_000 } = {}) {
+    const deadline = Date.now() + maxWaitMs;
+    let order = { status: 'NEW', orderId, symbol };
+    while (Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, intervalMs));
+      try {
+        order = await this.signedRequest('GET', '/fapi/v1/order', { symbol, orderId });
+      } catch {
+        // 조회 실패는 다음 폴링에서 재시도 (타임아웃까지)
+        continue;
+      }
+      if (order.status !== 'NEW') break;
+    }
+    return order;
   }
 
   /**
