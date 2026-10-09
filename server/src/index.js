@@ -777,6 +777,21 @@ function retuneTracked() {
   hub.rebuildTracked([...traders.values()].filter((t) => t.running).map((t) => t.ownTracked()));
 }
 
+// 5분마다 시드 재선정 — 24h 거래대금 순위가 바뀌면 추적 종목을 교체한다.
+// 최초 선택분만 계속 들고 있으면 부팅 후 상위권에 진입한 급등주를 영원히 놓친다.
+// 보유 포지션은 탈락해도 히스토리를 유지한다 (UI 스파크라인·청산 판단용).
+const RESEED_MS = 5 * 60 * 1000;
+const reseedTimer = setInterval(() => {
+  try {
+    for (const t of traders.values()) t.registerPicks();
+    const held = new Set();
+    for (const t of traders.values()) for (const s of t.portfolio.positions.keys()) held.add(s);
+    hub.refreshSeedTargets(held).catch((err) => console.error('[market] 시드 갱신 실패:', err.message));
+  } catch (err) {
+    console.error('[market] 시드 재선정 실패:', err.message);
+  }
+}, RESEED_MS);
+
 // 1Hz: 전 Trader 가격 반영 + 청산 검사 + 스냅샷
 const stateTimer = setInterval(() => {
   for (const trader of traders.values()) {
@@ -857,6 +872,7 @@ function shutdown(signal) {
   console.log(`\n[server] ${signal} 수신, 종료합니다...`);
   clearInterval(stateTimer);
   clearInterval(liveTimer);
+  clearInterval(reseedTimer);
   for (const trader of traders.values()) trader.stop();
   hub.stop();
   for (const ws of clients.keys()) ws.close();

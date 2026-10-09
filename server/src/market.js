@@ -254,8 +254,10 @@ export class MarketHub {
     this.seedPicks.delete(traderId);
   }
 
-  /** 합집합 기준으로 히스토리 시드 + 불필요분 정리 */
-  async refreshSeedTargets() {
+  /** 합집합 기준으로 히스토리 시드 + 불필요분 정리
+   * @param {Set<string>} [keep] 탈락해도 유지할 심볼 (보유 포지션 등)
+   */
+  async refreshSeedTargets(keep = new Set()) {
     const union = new Set();
     for (const list of this.seedPicks.values()) for (const s of list) union.add(s);
     const targets = [...union];
@@ -264,7 +266,8 @@ export class MarketHub {
       console.log(`[market] 분봉 히스토리 시드 ${missing.length}종목 조회 중...`);
       await this.scanner.seedMany(missing, 8);
     }
-    this.scanner.prune(new Set(targets));
+    for (const s of keep) union.add(s);
+    this.scanner.prune(union);
     console.log(`[market] 히스토리 ${this.scanner.getTrackedSymbols().length}/${targets.length}종목 준비 완료`);
     return targets.length;
   }
