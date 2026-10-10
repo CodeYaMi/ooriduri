@@ -223,6 +223,20 @@ export class Trader extends EventEmitter {
     if (this.settings.autoTrade) this.autoBuy();
   }
 
+  /**
+   * 전체 평가 리스트 (전체 리스트 창용).
+   * 통과 여부·탈락 사유·보유/쿨다운 상태를 함께 담는다.
+   */
+  fullRanking() {
+    const universeKeys = [...this.hub.universeMap.keys()];
+    const { rows } = this.hub.scanner.rankAll(universeKeys, this.hub.market, this.settings);
+    return rows.map((r) => ({
+      ...r,
+      cooldownLeftMin: this.#cooldownLeft(r.symbol),
+      held: this.portfolio.positions.has(r.symbol),
+    }));
+  }
+
   #cooldownLeft(symbol) {
     const until = this.cooldowns.get(symbol);
     if (!until) return 0;

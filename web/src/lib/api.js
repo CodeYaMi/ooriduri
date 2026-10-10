@@ -26,7 +26,7 @@ export function onAuthExpired(fn) {
 }
 
 /** 거래 계정 스코프가 필요한 경로 */
-const SCOPED = ['/api/settings', '/api/engine', '/api/portfolio', '/api/positions', '/api/trades', '/api/events', '/api/account'];
+const SCOPED = ['/api/settings', '/api/engine', '/api/portfolio', '/api/positions', '/api/trades', '/api/events', '/api/account', '/api/candidates'];
 
 function scopedPath(path) {
   if (!activeAccountId) return path;
@@ -76,6 +76,7 @@ export const api = {
     request(`/api/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`),
   trades: () => request('/api/trades'),
   dailyTrades: (days = 30) => request(`/api/trades/daily?days=${days}`),
+  allCandidates: () => request('/api/candidates/all'),
   universe: () => request('/api/universe'),
 
   // ── 인증 / 사용자 ──

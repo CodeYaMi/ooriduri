@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import { fmtCompact, fmtPct, fmtPrice, fmtUsd, pnlClass } from '../lib/format.js';
+import { CandidateList } from './CandidateList.jsx';
 
 /** 분봉 거래량 미니 차트 (급등 구간 하이라이트) */
 function VolumeBars({ bars, recentWindow = 3 }) {
@@ -40,6 +41,7 @@ function RsiGauge({ rsi, min, max }) {
 
 export function MarketTable({ candidates, live, settings, nearMiss, entryRejects, onSelect, selected, onManualBuy, onScan, scanning }) {
   const [hover, setHover] = useState(null);
+  const [fullOpen, setFullOpen] = useState(false);
 
   const rows = useMemo(
     () =>
@@ -66,6 +68,9 @@ export function MarketTable({ candidates, live, settings, nearMiss, entryRejects
         </div>
         <div className="panel-head-right">
           <span className="chip">{rows.length}/{settings.topN}종목</span>
+          <button className="btn btn-sm" onClick={() => setFullOpen(true)} title="통과 여부와 탈락 사유까지 전 종목 표시">
+            📋 전체 리스트
+          </button>
           <button className="btn btn-sm" onClick={onScan} disabled={scanning}>
             {scanning ? '스캔 중…' : '지금 스캔'}
           </button>
@@ -193,6 +198,16 @@ export function MarketTable({ candidates, live, settings, nearMiss, entryRejects
           </table>
         </div>
       )}
+
+      <CandidateList
+        open={fullOpen}
+        onClose={() => setFullOpen(false)}
+        settings={settings}
+        live={live}
+        selected={selected}
+        onSelect={(s) => { onSelect(s); }}
+        onManualBuy={onManualBuy}
+      />
     </section>
   );
 }

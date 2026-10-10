@@ -584,6 +584,21 @@ app.get('/api/universe', requireAuth, (req, res) => {
   });
 });
 
+/** 전체 평가 리스트 (통과 여부·탈락 사유 포함, 점수순) */
+app.get('/api/candidates/all', requireAuth, (req, res) => {
+  const trader = resolveTrader(req, res);
+  if (!trader) return;
+  const t0 = Date.now();
+  const rows = trader.fullRanking();
+  res.json({
+    rows,
+    count: rows.length,
+    passedCount: rows.filter((r) => r.passed).length,
+    ms: Date.now() - t0,
+    accountId: trader.accountId,
+  });
+});
+
 // ── 계정 / 실거래 (거래 계정별 자격증명) ──────────────────────
 
 /** 저장된 자격증명 상태 (시크릿 절대 포함하지 않음) */

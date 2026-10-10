@@ -8,7 +8,7 @@
 | 최종 갱신 | 2026-09-28 |
 | 버전 | 1.0.0 |
 | 코드 규모 | 7,195줄 (server + web + scripts) |
-| 테스트 | 555개 / 전부 통과 |
+| 테스트 | 574개 / 전부 통과 |
 | 런타임 | Node 20+ (검증 환경 v22.22.2) |
 
 ---
@@ -549,6 +549,7 @@ stepSize 미배수         → 내림 후 반올림 처리
 | GET | `/api/klines?symbol=&interval=&limit=` | 분봉 조회 |
 | GET | `/api/trades` | 청산 내역 |
 | GET | `/api/trades/daily?days=` | 일별 실현 손익 집계 (청산 기준) |
+| GET | `/api/candidates/all` | 전체 평가 리스트 (통과 여부·탈락 사유, 점수순) |
 | GET | `/api/universe` | 거래 가능 종목 |
 
 ### 7.2 인증 / 사용자 (신규)
@@ -739,16 +740,17 @@ MARKET 주문에 `newOrderRespType: 'RESULT'` 를 쓰면 avgPrice 가
 npm test
 ```
 
-### 9.2 구성 (555개)
+### 9.2 구성 (574개)
 
 | 스크립트 | 개수 | 대상 |
 |---|---|---|
 | `check-syntax.js` | 26 | server/scripts/web 전 파일 구문 (`node --check`) |
-| `check-docs.js` | 109 | **문서가 코드와 맞는지** (기본값·그룹·엔드포인트·공식) |
+| `check-syntax.js` | 38 | server/scripts 전 파일 구문 (`node --check`) |
+| `check-docs.js` | 130 | **문서가 코드와 맞는지** (기본값·그룹·엔드포인트·공식) |
 | `test-portfolio.js` | 36 | 익절/손절 경계, 슬롯/잔고, 수수료·슬리피지, 트레일링, 시간 |
 | `test-settings.js` | 44 | 범위 강제, 문자열 파싱, 불리언, 상관관계 |
 | `test-rsi.js` | 13 | **Wilder 교과서 기준값** + 경계값 |
-| `test-rsi-filter.js` | 30 | RSI 필터 동작, 임계값 변화, 근접 진단 |
+| `test-rsi-filter.js` | 41 | RSI 필터 동작·임계값·근접 진단·**전체 리스트(rankAll)** |
 | `test-24h-filter.js` | 26 | 24h 진입 차단 + **[핵심] 청산 영향 없음** |
 | `test-live.js` | 63 |
 | `test-daily.js` | 30 | 일별 집계 (경계·기간·내성) |

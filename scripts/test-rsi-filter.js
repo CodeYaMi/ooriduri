@@ -221,5 +221,35 @@ console.log('\n── 8. 근접 탈락 진단 (nearMisses) ──');
   check('통과 종목이 있으면 nearMiss 없음', passing.nearMisses(['PASSING'], mkMarket('PASSING'), loose, 5), []);
 }
 
+console.log('\n── 9. 전체 평가 리스트 (rankAll) ──');
+{
+  const specs = [
+    { symbol: 'MOMENTUM', volumes: surgingVolumes(), closes: MOMENTUM },
+    { symbol: 'HOT', volumes: surgingVolumes(), closes: HOT },
+    { symbol: 'NOSURGE', volumes: flatVolumes(), closes: MOMENTUM },
+  ];
+  const market = mkMarket('MOMENTUM', 'HOT', 'NOSURGE');
+  const scanner = build(specs);
+  const { rows, rejectedByRsi, rejectedBy24h } = scanner.rankAll([...market.keys()], market, baseSettings);
+
+  check('전 종목 반환 (통과+탈락)', rows.length, 3);
+  check('점수순 정렬', rows[0].score >= rows[1].score && rows[1].score >= rows[2].score, true);
+  const by = Object.fromEntries(rows.map((r) => [r.symbol, r]));
+  check('통과 표시', by.MOMENTUM.passed, true);
+  check('통과 사유 없음', by.MOMENTUM.reasons, []);
+  check('과매수 탈락 표시', by.HOT.passed, false);
+  check('과매수 탈락 사유', by.HOT.reasons.some((r) => r.includes('RSI')), true);
+  check('급등 미달 탈락 사유', by.NOSURGE.reasons.length > 0, true);
+  check('RSI 카운터 일치', rejectedByRsi, 1);
+  check('보유/쿨다운 필드 없음 (트레이더가 부여)', 'held' in by.MOMENTUM, false);
+
+  // rank()는 rankAll과 같은 판정 → 동일 집합
+  const ranked = scanner.rank([...market.keys()], market, baseSettings).map((c) => c.symbol);
+  check('rank와 일치', ranked, rows.filter((r) => r.passed).map((r) => r.symbol));
+  // rank() 출력 모양 유지 (passed/reasons 없음, bars 있음)
+  const first = scanner.rank(['MOMENTUM'], market, baseSettings)[0];
+  check('rank 모양 유지', ['passed' in first, 'reasons' in first, Array.isArray(first.bars)], [false, false, true]);
+}
+
 console.log(`\n${'═'.repeat(46)}\n통과 ${pass} / 실패 ${fail}\n`);
 process.exit(fail === 0 ? 0 : 1);

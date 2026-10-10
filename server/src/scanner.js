@@ -238,15 +238,17 @@ export class VolumeScanner {
   }
 
   /**
-   * 전체 종목 평가 → 임계값 통과 종목만 점수순으로 정렬해 반환
+   * 전체 종목 평가 → 통과 여부·탈락 사유까지 담은 전체 리스트를 점수순으로 반환.
+   * rank()와 동일한 판정 로직을 공유한다 (전체 리스트 창용).
+   * @returns {{ rows: Array, rejectedByRsi: number, rejectedBy24h: number }}
+   *   row = 후보 row + { passed: bool, reasons: string[] } (bars 제외로 경량화)
    */
-  rank(symbols, marketStats, settings) {
+  rankAll(symbols, marketStats, settings) {
     const {
       zScoreThreshold,
       surgeRatioThreshold,
       minMinuteQuoteVolumeUSDT,
       min24hQuoteVolumeUSDT,
-      topN,
       useRsiFilter,
       rsiMin,
       rsiMax,
@@ -256,8 +258,7 @@ export class VolumeScanner {
 
     const rsiEnabled = Boolean(useRsiFilter);
     const chgEnabled = Boolean(use24hChangeFilter);
-    const passed = [];
-    // 진입 조건으로만 탈락한 종목 수 — 후보가 비었을 때 진단용
+    const rows = [];
     let rejectedByRsi = 0;
     let rejectedBy24h = 0;
 
@@ -273,28 +274,30 @@ export class VolumeScanner {
       });
       if (!metrics) continue;
       if (metrics.recentAvg < minMinuteQuoteVolumeUSDT) continue;
-      if (metrics.ratio < surgeRatioThreshold) continue;
-      if (metrics.z < zScoreThreshold) continue;
 
-      // ── 24시간 변동률 진입 조건 ──
-      // 마이너스로 빠진 종목은 진입하지 않는다.
-      // (하락 추세 + 거래량 급등은 대개 "탈락 돌파"라 위험도가 높다)
+      // 탈락 사유 수집 (통과 종목은 빈 배열)
+      const reasons = [];
+      const volumePass =
+        metrics.ratio >= surgeRatioThreshold &&
+        metrics.z >= zScoreThreshold;
+      if (metrics.ratio < surgeRatioThreshold) reasons.push(`급등 ${metrics.ratio.toFixed(2)}배 < ${surgeRatioThreshold}배`);
+      if (metrics.z < zScoreThreshold) reasons.push(`z ${metrics.z.toFixed(2)} < ${zScoreThreshold}`);
+
+      let rsiBlocked = false;
+      let chgBlocked = false;
       if (chgEnabled && stat.priceChangePercent < minChange24hPct) {
-        rejectedBy24h += 1;
-        continue;
+        reasons.push(`24h 변동 ${stat.priceChangePercent.toFixed(2)}% < ${minChange24hPct}%`);
+        chgBlocked = true;
       }
-
-      // ── RSI 진입 조건 ──
-      // 데이터가 아직 부족해 RSI 를 못 구하면 통과로 간주한다
-      // (시드 직후에도 다른 조건을 만족한 종목을 막지 않기 위함)
-      if (rsiEnabled && metrics.rsi !== null) {
-        if (metrics.rsi < rsiMin || metrics.rsi > rsiMax) {
-          rejectedByRsi += 1;
-          continue;
-        }
+      if (rsiEnabled && metrics.rsi !== null && (metrics.rsi < rsiMin || metrics.rsi > rsiMax)) {
+        reasons.push(`RSI ${metrics.rsi.toFixed(1)} 범위 밖 (${rsiMin}~${rsiMax})`);
+        rsiBlocked = true;
       }
+      // 기존 rank()와 동일: 거래량 게이트를 통과한 종목에 한해 집계
+      if (volumePass && rsiBlocked) rejectedByRsi += 1;
+      if (volumePass && chgBlocked) rejectedBy24h += 1;
 
-      passed.push({
+      rows.push({
         symbol,
         price: stat.lastPrice,
         change24hPct: stat.priceChangePercent,
@@ -316,13 +319,28 @@ export class VolumeScanner {
             (metrics.rsi === null ? 0 : Math.max(0, 1 - Math.abs(metrics.rsi - (rsiMin + rsiMax) / 2) / 50) * 0.5),
           3,
         ),
+        passed: reasons.length === 0,
+        reasons,
       });
     }
 
+    rows.sort((a, b) => b.score - a.score);
+    return { rows, rejectedByRsi, rejectedBy24h };
+  }
+
+  /**
+   * 전체 종목 평가 → 임계값 통과 종목만 점수순으로 정렬해 반환
+   */
+  rank(symbols, marketStats, settings) {
+    const { topN } = settings;
+    const { rows, rejectedByRsi, rejectedBy24h } = this.rankAll(symbols, marketStats, settings);
+
     this.lastRejectedByRsi = rejectedByRsi;
     this.lastRejectedBy24h = rejectedBy24h;
-    passed.sort((a, b) => b.score - a.score);
-    return passed.slice(0, topN);
+    return rows
+      .filter((r) => r.passed)
+      .slice(0, topN)
+      .map(({ passed, reasons, ...row }) => row);
   }
 
   /**
