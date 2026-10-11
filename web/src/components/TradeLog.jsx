@@ -1,6 +1,6 @@
 import { REASON_LABEL, fmtDuration, fmtPct, fmtPrice, fmtSignedUsd, pnlClass } from '../lib/format.js';
 
-export function TradeLog({ trades, onOpenDaily }) {
+export function TradeLog({ trades, onOpenDaily, onDownloadCsv, downloadingCsv }) {
   return (
     <section className="panel">
       <div className="panel-head">
@@ -10,6 +10,9 @@ export function TradeLog({ trades, onOpenDaily }) {
         </div>
         <div className="panel-head-right">
           <span className="chip">{trades.length}건</span>
+          <button className="btn btn-sm" onClick={onDownloadCsv} disabled={downloadingCsv || trades.length === 0} title="전체 청산 내역을 CSV 파일로 저장">
+            {downloadingCsv ? '저장 중…' : '⬇ CSV'}
+          </button>
           <button className="btn btn-sm" onClick={onOpenDaily} title="날짜별 실현 손익 집계">
             📊 일별 수익률
           </button>

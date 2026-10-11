@@ -11,6 +11,7 @@ import { normalizeSettings, SCHEMA, GROUPS, DEFAULT_SETTINGS, savePortfolioTo } 
 import { MarketHub } from './market.js';
 import { Trader } from './trader.js';
 import { scheduleRestart } from './restart.js';
+import { tradesToCsv, csvFilename } from './csv.js';
 import { ping } from './binance/rest.js';
 import { validateCredentialShape } from './binance/private.js';
 import {
@@ -549,6 +550,19 @@ app.get('/api/trades/daily', requireAuth, (req, res) => {
   const days = Math.min(Math.max(Number(req.query.days) || 30, 1), 365);
   const stats = trader.portfolio.dailyStats(days);
   res.json({ daily: stats.days, total: stats.total, accountId: trader.accountId, periodDays: days });
+});
+
+/** 청산 내역 CSV 다운로드 (전체 기록, BOM 포함) */
+app.get('/api/trades/csv', requireAuth, (req, res) => {
+  const trader = resolveTrader(req, res);
+  if (!trader) return;
+  const csv = tradesToCsv(trader.portfolio.trades);
+  const filename = csvFilename(trader.meta?.name ?? trader.accountId);
+  // 헤더는 Latin-1만 허용 → quoted 부분은 ASCII로, 한글은 filename* 로 전달
+  const asciiFallback = `coin-surfer-trades_${Date.now()}.csv`;
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader('Content-Disposition', `attachment; filename="${asciiFallback}"; filename*=UTF-8''${encodeURIComponent(filename)}`);
+  res.send(csv);
 });
 
 /** 본인 계정의 이벤트 로그 */

@@ -8,7 +8,7 @@
 | 최종 갱신 | 2026-09-28 |
 | 버전 | 1.0.0 |
 | 코드 규모 | 7,195줄 (server + web + scripts) |
-| 테스트 | 574개 / 전부 통과 |
+| 테스트 | 592개 / 전부 통과 |
 | 런타임 | Node 20+ (검증 환경 v22.22.2) |
 
 ---
@@ -549,6 +549,7 @@ stepSize 미배수         → 내림 후 반올림 처리
 | GET | `/api/klines?symbol=&interval=&limit=` | 분봉 조회 |
 | GET | `/api/trades` | 청산 내역 |
 | GET | `/api/trades/daily?days=` | 일별 실현 손익 집계 (청산 기준) |
+| GET | `/api/trades/csv` | 청산 내역 CSV 다운로드 (BOM, 전체 기록) |
 | GET | `/api/candidates/all` | 전체 평가 리스트 (통과 여부·탈락 사유, 점수순) |
 | GET | `/api/universe` | 거래 가능 종목 |
 
@@ -740,7 +741,7 @@ MARKET 주문에 `newOrderRespType: 'RESULT'` 를 쓰면 avgPrice 가
 npm test
 ```
 
-### 9.2 구성 (574개)
+### 9.2 구성 (592개)
 
 | 스크립트 | 개수 | 대상 |
 |---|---|---|
@@ -754,6 +755,7 @@ npm test
 | `test-24h-filter.js` | 26 | 24h 진입 차단 + **[핵심] 청산 영향 없음** |
 | `test-live.js` | 63 |
 | `test-daily.js` | 30 | 일별 집계 (경계·기간·내성) |
+| `test-csv.js` | 15 | BOM·정렬·이스케이프·파일명·시각 |
 | `test-reseed.js` | 6 | 시드 합집합·탈락 정리·보유 유지 |
 | `test-restart.js` | 10 | 재시작 헬퍼 (주입식 spawn/exit 검증) |
 | `test-sellfix.js` | 49 | 포지션 모드·자가 복구·백오프·체결 파싱·부분 체결·NEW 폴링·-4047 복구 | 실거래 주문·동기화·잔고·오류 전파·**주문 시뮬레이션**·확인 게이트 |

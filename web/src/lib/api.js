@@ -76,6 +76,32 @@ export const api = {
     request(`/api/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`),
   trades: () => request('/api/trades'),
   dailyTrades: (days = 30) => request(`/api/trades/daily?days=${days}`),
+  downloadTradesCsv: async () => {
+    const headers = {};
+    if (authToken) headers.Authorization = `Bearer ${authToken}`;
+    const res = await fetch(`${BASE}${scopedPath('/api/trades/csv')}`, { headers });
+    if (res.status === 401) {
+      setAuthToken('');
+      if (onUnauthorized) onUnauthorized({});
+      throw new Error('로그인이 필요합니다.');
+    }
+    if (!res.ok) throw new Error(`다운로드 실패 (HTTP ${res.status})`);
+    const blob = await res.blob();
+    const cd = res.headers.get('Content-Disposition') || '';
+    // filename* (UTF-8) 우선, 없으면 filename 사용
+    const star = /filename\*=UTF-8''([^;]+)/.exec(cd)?.[1];
+    const quoted = /filename="([^"]+)"/.exec(cd)?.[1];
+    const filename = star ? decodeURIComponent(star) : (quoted ?? 'trades.csv');
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+    return filename;
+  },
   allCandidates: () => request('/api/candidates/all'),
   universe: () => request('/api/universe'),
 

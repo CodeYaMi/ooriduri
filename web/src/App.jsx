@@ -35,6 +35,7 @@ export default function App() {
   const [busy, setBusy] = useState(false);
   const [scanning, setScanning] = useState(false);
   const [restarting, setRestarting] = useState(false);
+  const [downloadingCsv, setDownloadingCsv] = useState(false);
 
   const user = session?.user ?? null;
   const isMaster = user?.role === 'master';
@@ -382,7 +383,19 @@ export default function App() {
           onCloseAll={handleCloseAll}
         />
 
-        <TradeLog trades={trades} onOpenDaily={() => setDailyOpen(true)} />
+        <TradeLog
+          trades={trades}
+          onOpenDaily={() => setDailyOpen(true)}
+          onDownloadCsv={() => {
+            setDownloadingCsv(true);
+            withBusy(async () => {
+              const filename = await api.downloadTradesCsv();
+              pushToast({ level: 'info', text: `저장됨: ${filename}` });
+              return true;
+            }, 'error').finally(() => setDownloadingCsv(false));
+          }}
+          downloadingCsv={downloadingCsv}
+        />
 
         <EventLog accountId={activeAccountId} />
 
